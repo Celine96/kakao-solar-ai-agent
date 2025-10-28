@@ -1,6 +1,5 @@
 fastapi[standard]
 uvicorn
-openai
 pydantic
-numpy
 python-dotenv
+requests
