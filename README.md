@@ -7,7 +7,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.13.0-3776AB?style=for-the-badge&logo=python)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.116.1-005571?style=for-the-badge&logo=fastapi)
-![OpenAI](https://img.shields.io/badge/OpenAI-1.97.1-412991?style=for-the-badge&logo=openai)
+
 
 
 Use this repo as a template to deploy a Python FastAPI server over Render.
@@ -16,7 +16,7 @@ Use this repo as a template to deploy a Python FastAPI server over Render.
 
 1. Modify README's Deploy to Render Button to own repository URL.
 
-2. Set `OPENAI_API_KEY` in Render secrets.
+2. Set `Solar_API_KEY` in Render secrets.
 
 3. Simply click:
 
