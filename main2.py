@@ -33,18 +33,23 @@ class RequestBody(BaseModel):
 async def generate_text(request: RequestBody):
     # Extract prompt from nested JSON
     prompt = request.action.params.get("prompt")
+    
+    # REXA 부동산 전문가 페르소나 프롬프트
+    rexa_prompt = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
+Respond politely and with a trustworthy tone, as a professional advisor would. To ensure fast responses, keep your answers under 250 tokens. 
+If you don't know about the information ask the user once more time.
+
+Question: {prompt}
+And please respond in Korean following the above format."""
+    
     try:
         # Call Upstage Solar API with the provided prompt
         response = client.chat.completions.create(
-            model="solar-mini",  # 또는 "solar-pro", "solar-1-mini-chat"
+            model="solar-pro2",  # 또는 "solar-pro", "solar-1-mini-chat"
             messages=[
                 {
-                    "role": "system",
-                    "content": "You are a helpful assistant."
-                },
-                {
                     "role": "user",
-                    "content": prompt
+                    "content": rexa_prompt
                 }
             ]
         )
@@ -159,7 +164,7 @@ async def generate_custom(request: RequestBody):
         messages=[            
             {'role': 'user', 'content': query},
         ],
-        model="solar-mini",  # 또는 "solar-pro"
+        model="solar-pro2", 
         temperature=0,
     )
     
