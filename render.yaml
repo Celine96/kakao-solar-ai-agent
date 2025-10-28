@@ -1,9 +1,12 @@
 services:
   # A Docker web service
   - type: web
-    name: pycon-AI-messenger
+    name: kakao-solar-chatbot
     runtime: python
     plan: free
     autoDeploy: false
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: UPSTAGE_API_KEY
+        sync: false
