@@ -45,7 +45,7 @@ And please respond in Korean following the above format."""
     try:
         # Call Upstage Solar API with the provided prompt
         response = client.chat.completions.create(
-            model="solar-pro2",  # 또는 "solar-pro", "solar-1-mini-chat"
+            model="solar-mini",  # 또는 "solar-pro", "solar-1-mini-chat"
             messages=[
                 {
                     "role": "user",
@@ -164,7 +164,7 @@ async def generate_custom(request: RequestBody):
         messages=[            
             {'role': 'user', 'content': query},
         ],
-        model="solar-pro2", 
+        model="solar-mini", 
         temperature=0,
     )
     
