@@ -1,6 +1,5 @@
 # pycon-AI-messenger
 
-<img width="3294" height="900" alt="스크린샷 2025-08-10 오후 10 36 30" src="https://github.com/user-attachments/assets/b6a75e85-1d61-40b1-9045-9239bfe46f7e" />
 
 
 ![GitHub](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github)
@@ -10,8 +9,6 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.116.1-005571?style=for-the-badge&logo=fastapi)
 ![OpenAI](https://img.shields.io/badge/OpenAI-1.97.1-412991?style=for-the-badge&logo=openai)
 
-[![Slide](https://img.shields.io/badge/Slide-FBBC04?style=for-the-badge&logo=googleslides&logoColor=black)](https://docs.google.com/presentation/d/1v4ngcvDd4_IrCAl0xlAKd1ltSXErBueexrQImsusN3w/edit?usp=sharing)
-[![Youtube](https://img.shields.io/badge/Youtube-FF0000?style=for-the-badge&logo=youtube)](https://youtube.com/playlist?list=PLzgzQOH1LVuVHdopkWMR5osFyNhAEpv8F&si=Ymar88_k9yO0yTlE)
 
 Use this repo as a template to deploy a Python FastAPI server over Render.
 
@@ -23,7 +20,7 @@ Use this repo as a template to deploy a Python FastAPI server over Render.
 
 3. Simply click:
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/jhk0530/pycon-AI-messenger)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Celine96/kakao-solar-ai-agent)
 
 ## Note
 
