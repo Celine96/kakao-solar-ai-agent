@@ -51,8 +51,8 @@ WEBHOOK_FAILED_QUEUE = "rexa:failed_queue"
 MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", 3))
 QUEUE_PROCESS_INTERVAL = int(os.getenv("QUEUE_PROCESS_INTERVAL", 5))  # seconds
 
-# API Timeout Configuration
-API_TIMEOUT = int(os.getenv("API_TIMEOUT", 5))  # seconds
+# API Timeout Configuration - 카카오톡 5초 제한 대응
+API_TIMEOUT = int(os.getenv("API_TIMEOUT", 3))  # seconds
 
 # Global state
 redis_client: Optional[Any] = None
@@ -328,10 +328,10 @@ async def perform_health_check() -> bool:
     try:
         # Test Solar API with a simple request
         response = client.chat.completions.create(
-            model="solar-mini-nightly",
+            model="solar-mini",
             messages=[{"role": "user", "content": "test"}],
             max_tokens=10,
-            timeout=5
+            timeout=3
         )
         
         if not response or not response.choices:
@@ -398,13 +398,13 @@ And please respond in Korean following the above format."""
     
     try:
         response = client.chat.completions.create(
-            model="solar-mini-nightly",
+            model="solar-mini",
             messages=[{"role": "user", "content": rexa_prompt}],
             timeout=API_TIMEOUT
         )
         
         answer = response.choices[0].message.content
-        logger.info(f"✅ Success with solar-mini-nightly")
+        logger.info(f"✅ Success with solar-mini")
         
         return {
             "version": "2.0",
@@ -439,59 +439,18 @@ def read_root():
 
 @app.post("/generate")
 async def generate_text(request: RequestBody):
-    """REXA 부동산 전문 챗봇 with queue support"""
+    """REXA 부동산 전문 챗봇 - 카카오톡 5초 제한 대응"""
     request_id = str(uuid.uuid4())
     
     try:
-        if not server_healthy:
-            logger.warning(f"⚠️ Server unhealthy - queueing request {request_id}")
-            
-            if await enqueue_webhook_request(request_id, request.model_dump()):
-                return {
-                    "version": "2.0",
-                    "template": {
-                        "outputs": [
-                            {
-                                "simpleText": {
-                                    "text": "현재 서버가 일시적으로 혼잡합니다. 요청이 대기열에 추가되었으며 곧 처리됩니다. 잠시만 기다려주세요."
-                                }
-                            }
-                        ]
-                    }
-                }
-            else:
-                return {
-                    "version": "2.0",
-                    "template": {
-                        "outputs": [
-                            {
-                                "simpleText": {
-                                    "text": "죄송합니다. 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
-                                }
-                            }
-                        ]
-                    }
-                }
-        
+        # 3초 타임아웃으로 빠른 응답 시도
         result = await process_solar_request(request.model_dump())
         return result
         
     except APITimeoutError as e:
-        logger.error(f"❌ Timeout in /generate endpoint: {e}")
-        
-        if await enqueue_webhook_request(request_id, request.model_dump()):
-            return {
-                "version": "2.0",
-                "template": {
-                    "outputs": [
-                        {
-                            "simpleText": {
-                                "text": "응답 시간이 초과되었습니다. 요청이 대기열에 추가되었으며 재시도됩니다."
-                            }
-                        }
-                    ]
-                }
-            }
+        # 3초 타임아웃 발생 시
+        logger.warning(f"⏰ Timeout (3s) - enqueueing request {request_id}")
+        await enqueue_webhook_request(request_id, request.model_dump())
         
         return {
             "version": "2.0",
@@ -499,7 +458,7 @@ async def generate_text(request: RequestBody):
                 "outputs": [
                     {
                         "simpleText": {
-                            "text": "죄송합니다. 응답 시간이 초과되었습니다. 다시 시도해주세요."
+                            "text": "답변 생성에 시간이 걸리고 있습니다. 잠시 후 다시 질문해주세요."
                         }
                     }
                 ]
@@ -507,21 +466,8 @@ async def generate_text(request: RequestBody):
         }
         
     except OpenAIError as e:
-        logger.error(f"❌ API Error in /generate endpoint: {e}")
-        
-        if await enqueue_webhook_request(request_id, request.model_dump()):
-            return {
-                "version": "2.0",
-                "template": {
-                    "outputs": [
-                        {
-                            "simpleText": {
-                                "text": "API 오류가 발생했습니다. 요청이 대기열에 추가되었으며 재시도됩니다."
-                            }
-                        }
-                    ]
-                }
-            }
+        logger.error(f"❌ API Error: {e}")
+        await enqueue_webhook_request(request_id, request.model_dump())
         
         return {
             "version": "2.0",
@@ -529,7 +475,7 @@ async def generate_text(request: RequestBody):
                 "outputs": [
                     {
                         "simpleText": {
-                            "text": "죄송합니다. API 오류가 발생했습니다."
+                            "text": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
                         }
                     }
                 ]
@@ -537,21 +483,8 @@ async def generate_text(request: RequestBody):
         }
         
     except Exception as e:
-        logger.error(f"❌ Error in /generate endpoint: {type(e).__name__}: {e}")
-        
-        if await enqueue_webhook_request(request_id, request.model_dump()):
-            return {
-                "version": "2.0",
-                "template": {
-                    "outputs": [
-                        {
-                            "simpleText": {
-                                "text": "요청 처리 중 오류가 발생했습니다. 요청이 대기열에 추가되었으며 재시도됩니다."
-                            }
-                        }
-                    ]
-                }
-            }
+        logger.error(f"❌ Error: {type(e).__name__}: {e}")
+        await enqueue_webhook_request(request_id, request.model_dump())
         
         return {
             "version": "2.0",
@@ -559,7 +492,7 @@ async def generate_text(request: RequestBody):
                 "outputs": [
                     {
                         "simpleText": {
-                            "text": "죄송합니다. 알 수 없는 오류가 발생했습니다."
+                            "text": "죄송합니다. 오류가 발생했습니다. 다시 한번 질문해주시겠어요?"
                         }
                     }
                 ]
@@ -573,7 +506,7 @@ async def health_check() -> HealthStatus:
     
     return HealthStatus(
         status="healthy" if server_healthy else "unhealthy",
-        model="solar-mini-nightly",
+        model="solar-mini",
         mode="rexa_chatbot",
         server_healthy=server_healthy,
         last_check=last_health_check.isoformat(),
