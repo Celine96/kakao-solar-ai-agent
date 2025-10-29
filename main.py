@@ -2,7 +2,7 @@ import logging
 import os
 import asyncio
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 import uuid
 from collections import deque
 
@@ -18,6 +18,7 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
+    Redis = Any  # Fallback type when Redis is not available
     logging.warning("redis package not installed. Using in-memory queue.")
 
 # 로깅 설정
@@ -54,7 +55,7 @@ QUEUE_PROCESS_INTERVAL = int(os.getenv("QUEUE_PROCESS_INTERVAL", 5))  # seconds
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", 5))  # seconds
 
 # Global state
-redis_client: Optional[Redis] = None
+redis_client: Optional[Any] = None
 server_healthy = True
 unhealthy_count = 0
 last_health_check = datetime.now()
