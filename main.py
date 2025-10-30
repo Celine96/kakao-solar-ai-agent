@@ -51,8 +51,8 @@ WEBHOOK_FAILED_QUEUE = "rexa:failed_queue"
 MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", 3))
 QUEUE_PROCESS_INTERVAL = int(os.getenv("QUEUE_PROCESS_INTERVAL", 5))  # seconds
 
-# API Timeout Configuration - 카카오톡 5초 제한 대응
-API_TIMEOUT = int(os.getenv("API_TIMEOUT", 3))  # seconds
+# API Timeout Configuration
+API_TIMEOUT = int(os.getenv("API_TIMEOUT", 3))  # seconds - 카카오톡 5초 제한 대응
 
 # Global state
 redis_client: Optional[Any] = None
@@ -328,7 +328,7 @@ async def perform_health_check() -> bool:
     try:
         # Test Solar API with a simple request
         response = client.chat.completions.create(
-            model="solar-mini",
+            model="solar-mini-nightly",
             messages=[{"role": "user", "content": "test"}],
             max_tokens=10,
             timeout=3
@@ -384,8 +384,59 @@ async def queue_processor():
 # ================================================================================
 
 async def process_solar_request(request_body: dict) -> dict:
-    """Process Solar API request"""
-    prompt = request_body.get("action", {}).get("params", {}).get("prompt")
+    """Process Solar API request with comprehensive parameter extraction"""
+    
+    # 상세 로그: 모든 요청 기록
+    logger.info("="*70)
+    logger.info("🔍 PARAMETER EXTRACTION START")
+    logger.info(f"📋 Full request body: {request_body}")
+    
+    # 다양한 방법으로 prompt 추출 시도
+    prompt = None
+    
+    # 방법 1: action.params.prompt (표준)
+    if request_body.get("action", {}).get("params", {}).get("prompt"):
+        prompt = request_body["action"]["params"]["prompt"]
+        logger.info(f"✅ Method 1 (action.params.prompt): '{prompt}'")
+    
+    # 방법 2: action.detailParams
+    elif request_body.get("action", {}).get("detailParams", {}):
+        detail_params = request_body["action"]["detailParams"]
+        for key, value in detail_params.items():
+            if isinstance(value, dict) and "value" in value:
+                prompt = value["value"]
+                logger.info(f"✅ Method 2 (detailParams.{key}): '{prompt}'")
+                break
+    
+    # 방법 3: userRequest.utterance (카카오톡 직접 발화)
+    elif request_body.get("userRequest", {}).get("utterance"):
+        prompt = request_body["userRequest"]["utterance"]
+        logger.info(f"✅ Method 3 (userRequest.utterance): '{prompt}'")
+    
+    # 방법 4: 최상위 utterance
+    elif request_body.get("utterance"):
+        prompt = request_body["utterance"]
+        logger.info(f"✅ Method 4 (utterance): '{prompt}'")
+    
+    # prompt를 찾지 못한 경우
+    if not prompt or (isinstance(prompt, str) and prompt.strip() == ""):
+        logger.warning("⚠️ No prompt found in request!")
+        logger.warning(f"⚠️ Request keys: {list(request_body.keys())}")
+        
+        # 기본 응답
+        return {
+            "version": "2.0",
+            "template": {
+                "outputs": [{
+                    "simpleText": {
+                        "text": "안녕하세요! REXA입니다. 무엇이 궁금하신가요?\n부동산 세금, 경매, 민법 등에 대해 질문해주세요."
+                    }
+                }]
+            }
+        }
+    
+    logger.info(f"📝 Final extracted prompt: '{prompt}'")
+    logger.info("="*70)
     
     rexa_prompt = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
 Respond politely and with a trustworthy tone, as a professional advisor would. To ensure fast responses, keep your answers under 250 tokens. 
@@ -394,17 +445,18 @@ If you don't know about the information ask the user once more time.
 Question: {prompt}
 And please respond in Korean following the above format."""
     
-    logger.info(f"Processing request with prompt: {prompt}")
+    logger.info(f"🤖 Calling Solar API with prompt: {prompt[:50]}...")
     
     try:
         response = client.chat.completions.create(
-            model="solar-mini",
+            model="solar-mini-nightly",
             messages=[{"role": "user", "content": rexa_prompt}],
             timeout=API_TIMEOUT
         )
         
         answer = response.choices[0].message.content
-        logger.info(f"✅ Success with solar-mini")
+        logger.info(f"✅ Solar API success - Response length: {len(answer)} chars")
+        logger.info(f"📤 Sending response: {answer[:100]}...")
         
         return {
             "version": "2.0",
@@ -420,13 +472,13 @@ And please respond in Korean following the above format."""
         }
         
     except APITimeoutError as e:
-        logger.error(f"API Timeout: {e}")
+        logger.error(f"⏰ API Timeout after {API_TIMEOUT}s: {e}")
         raise
     except OpenAIError as e:
-        logger.error(f"API Error: {e}")
+        logger.error(f"❌ OpenAI API Error: {e}")
         raise
     except Exception as e:
-        logger.error(f"Unknown error: {e}")
+        logger.error(f"❌ Unexpected error: {type(e).__name__}: {e}")
         raise
 
 # ================================================================================
@@ -442,9 +494,15 @@ async def generate_text(request: RequestBody):
     """REXA 부동산 전문 챗봇 - 카카오톡 5초 제한 대응"""
     request_id = str(uuid.uuid4())
     
+    # 상세 로그: 모든 요청 기록
+    logger.info("="*50)
+    logger.info(f"📨 New request received: {request_id[:8]}")
+    logger.info(f"📋 Full request body: {request.model_dump()}")
+    
     try:
         # 3초 타임아웃으로 빠른 응답 시도
         result = await process_solar_request(request.model_dump())
+        logger.info(f"✅ Request {request_id[:8]} completed successfully")
         return result
         
     except APITimeoutError as e:
@@ -506,7 +564,7 @@ async def health_check() -> HealthStatus:
     
     return HealthStatus(
         status="healthy" if server_healthy else "unhealthy",
-        model="solar-mini",
+        model="solar-mini-nightly",
         mode="rexa_chatbot",
         server_healthy=server_healthy,
         last_check=last_health_check.isoformat(),
