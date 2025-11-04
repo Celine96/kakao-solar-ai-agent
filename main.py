@@ -32,7 +32,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+app = FastAPI(
+    title="REXA - Real Estate Expert Assistant",
+    description="Solar API + RAG chatbot for real estate",
+    version="1.0.0"
+)
 
 # ================================================================================
 # Configuration & Global Variables
@@ -95,10 +99,14 @@ try:
         article_chunks = data["chunks"]
         chunk_embeddings = data["embeddings"]
     logger.info(f"✅ Loaded {len(article_chunks)} chunks from embeddings.pkl")
+    logger.info(f"✅ RAG is ENABLED with {len(article_chunks)} chunks")
 except FileNotFoundError:
     logger.warning("⚠️ embeddings.pkl not found - RAG will not be available")
+    logger.warning("⚠️ Server will continue WITHOUT RAG - responses will be general")
+    logger.warning("⚠️ To enable RAG: run 'python embedding2_solar.py' and redeploy")
 except Exception as e:
     logger.error(f"❌ Failed to load embeddings: {e}")
+    logger.warning("⚠️ Server will continue WITHOUT RAG")
 
 # ================================================================================
 # RAG Helper Functions
@@ -117,11 +125,37 @@ async def get_relevant_context(prompt: str, top_n: int = 2) -> str:
         return ""
     
     try:
-        # Create embedding for the user's question using Solar embedding API
-        q_embedding = client.embeddings.create(
-            input=prompt, 
-            model="solar-embedding-1-large"
-        ).data[0].embedding
+        # 임베딩 차원 자동 감지
+        embedding_dim = len(chunk_embeddings[0])
+        logger.info(f"📊 Detected embedding dimension: {embedding_dim}")
+        
+        # 차원에 따라 적절한 API 사용
+        if embedding_dim == 1536:
+            # OpenAI 임베딩 (text-embedding-3-small)
+            logger.info("🔧 Using OpenAI embedding model")
+            try:
+                openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+                q_embedding = openai_client.embeddings.create(
+                    input=prompt, 
+                    model="text-embedding-3-small"
+                ).data[0].embedding
+            except Exception as e:
+                logger.error(f"❌ OpenAI embedding failed: {e}")
+                logger.info("💡 Set OPENAI_API_KEY environment variable")
+                return ""
+                
+        else:
+            # Solar 임베딩 (모든 다른 차원)
+            logger.info(f"🔧 Using Solar embedding model (dimension: {embedding_dim})")
+            try:
+                q_embedding = client.embeddings.create(
+                    input=prompt, 
+                    model="solar-embedding-1-large-query"  # Solar 쿼리용 모델
+                ).data[0].embedding
+            except Exception as e:
+                logger.error(f"❌ Solar embedding failed: {e}")
+                logger.error(f"   Model: solar-embedding-1-large-query")
+                return ""
         
         # Calculate similarities
         similarities = [cosine_similarity(q_embedding, emb) for emb in chunk_embeddings]
@@ -535,6 +569,72 @@ And please respond in Korean following the above format."""
 def read_root():
     return {"Hello": "REXA - Real Estate Expert Assistant (Solar + RAG)"}
 
+@app.post("/generate")
+async def generate_text(request: RequestBody):
+    """REXA 부동산 전문 챗봇 with RAG - /generate 엔드포인트"""
+    request_id = str(uuid.uuid4())
+    
+    logger.info("="*50)
+    logger.info(f"📨 New request received at /generate: {request_id[:8]}")
+    logger.info(f"📋 Full request body: {request.model_dump()}")
+    
+    try:
+        # 3초 타임아웃으로 빠른 응답 시도
+        result = await process_solar_rag_request(request.model_dump())
+        logger.info(f"✅ Request {request_id[:8]} completed successfully")
+        return result
+        
+    except APITimeoutError as e:
+        logger.warning(f"⏰ Timeout (3s) - enqueueing request {request_id}")
+        await enqueue_webhook_request(request_id, request.model_dump())
+        
+        return {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": "답변 생성에 시간이 걸리고 있습니다. 잠시 후 다시 질문해주세요."
+                        }
+                    }
+                ]
+            }
+        }
+        
+    except OpenAIError as e:
+        logger.error(f"❌ API Error: {e}")
+        await enqueue_webhook_request(request_id, request.model_dump())
+        
+        return {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+                        }
+                    }
+                ]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error: {type(e).__name__}: {e}")
+        await enqueue_webhook_request(request_id, request.model_dump())
+        
+        return {
+            "version": "2.0",
+            "template": {
+                "outputs": [
+                    {
+                        "simpleText": {
+                            "text": "죄송합니다. 오류가 발생했습니다. 다시 한번 질문해주시겠어요?"
+                        }
+                    }
+                ]
+            }
+        }
+
 @app.post("/custom")
 async def generate_custom(request: RequestBody):
     """REXA 부동산 전문 챗봇 with RAG - 카카오톡 5초 제한 대응"""
@@ -684,14 +784,30 @@ async def retry_failed_requests():
 @app.on_event("startup")
 async def startup_event():
     """Initialize resources on startup"""
+    logger.info("="*70)
     logger.info("🚀 Starting REXA server (Solar + RAG)...")
+    logger.info("="*70)
     
+    # RAG 상태 확인
+    if len(chunk_embeddings) > 0:
+        logger.info(f"✅ RAG ENABLED: {len(chunk_embeddings)} chunks loaded")
+    else:
+        logger.warning("⚠️ RAG DISABLED: No embeddings loaded")
+        logger.warning("⚠️ Server will work but without company-specific knowledge")
+    
+    # Redis 초기화
     await init_redis()
     
+    # Background tasks
     asyncio.create_task(health_check_monitor())
     asyncio.create_task(queue_processor())
     
-    logger.info(f"✅ REXA server started - RAG: {len(chunk_embeddings)} chunks loaded")
+    logger.info("="*70)
+    logger.info("✅ REXA server startup complete!")
+    logger.info(f"   - Model: solar-mini")
+    logger.info(f"   - RAG chunks: {len(chunk_embeddings)}")
+    logger.info(f"   - Redis: {'connected' if redis_client else 'in-memory queue'}")
+    logger.info("="*70)
 
 @app.on_event("shutdown")
 async def shutdown_event():
