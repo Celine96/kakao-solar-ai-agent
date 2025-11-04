@@ -328,7 +328,7 @@ async def perform_health_check() -> bool:
     try:
         # Test Solar API with a simple request
         response = client.chat.completions.create(
-            model="solar-mini-nightly",
+            model="solar-mini",
             messages=[{"role": "user", "content": "test"}],
             max_tokens=10,
             timeout=3
@@ -449,7 +449,7 @@ And please respond in Korean following the above format."""
     
     try:
         response = client.chat.completions.create(
-            model="solar-mini-nightly",
+            model="solar-mini",
             messages=[{"role": "user", "content": rexa_prompt}],
             timeout=API_TIMEOUT
         )
@@ -564,7 +564,7 @@ async def health_check() -> HealthStatus:
     
     return HealthStatus(
         status="healthy" if server_healthy else "unhealthy",
-        model="solar-mini-nightly",
+        model="solar-mini",
         mode="rexa_chatbot",
         server_healthy=server_healthy,
         last_check=last_health_check.isoformat(),
