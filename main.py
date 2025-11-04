@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from openai import OpenAI, OpenAIError, APITimeoutError
 import numpy as np
+import pickle
 
 # Redis for queue management
 try:
@@ -18,10 +19,13 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    Redis = Any  # Fallback type when Redis is not available
+    Redis = Any
     logging.warning("redis package not installed. Using in-memory queue.")
 
-# 로깅 설정
+# ================================================================================
+# Logging Configuration
+# ================================================================================
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -41,7 +45,7 @@ REDIS_DB = int(os.getenv("REDIS_DB", 0))
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
 
 # Health Check Configuration
-HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", 5))  # seconds
+HEALTH_CHECK_INTERVAL = int(os.getenv("HEALTH_CHECK_INTERVAL", 5))
 MAX_UNHEALTHY_COUNT = int(os.getenv("MAX_UNHEALTHY_COUNT", 3))
 
 # Queue Configuration
@@ -49,10 +53,10 @@ WEBHOOK_QUEUE_NAME = "rexa:webhook_queue"
 WEBHOOK_PROCESSING_QUEUE = "rexa:processing_queue"
 WEBHOOK_FAILED_QUEUE = "rexa:failed_queue"
 MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", 3))
-QUEUE_PROCESS_INTERVAL = int(os.getenv("QUEUE_PROCESS_INTERVAL", 5))  # seconds
+QUEUE_PROCESS_INTERVAL = int(os.getenv("QUEUE_PROCESS_INTERVAL", 5))
 
 # API Timeout Configuration
-API_TIMEOUT = int(os.getenv("API_TIMEOUT", 3))  # seconds - 카카오톡 5초 제한 대응
+API_TIMEOUT = int(os.getenv("API_TIMEOUT", 3))
 
 # Global state
 redis_client: Optional[Any] = None
@@ -77,6 +81,61 @@ client = OpenAI(
 )
 
 logger.info("✅ Upstage Solar API client configured")
+
+# ================================================================================
+# RAG - Load Embeddings
+# ================================================================================
+
+article_chunks = []
+chunk_embeddings = []
+
+try:
+    with open("embeddings.pkl", "rb") as f:
+        data = pickle.load(f)
+        article_chunks = data["chunks"]
+        chunk_embeddings = data["embeddings"]
+    logger.info(f"✅ Loaded {len(article_chunks)} chunks from embeddings.pkl")
+except FileNotFoundError:
+    logger.warning("⚠️ embeddings.pkl not found - RAG will not be available")
+except Exception as e:
+    logger.error(f"❌ Failed to load embeddings: {e}")
+
+# ================================================================================
+# RAG Helper Functions
+# ================================================================================
+
+def cosine_similarity(a, b):
+    """Calculate cosine similarity between two vectors"""
+    from numpy import dot
+    from numpy.linalg import norm
+    return dot(a, b) / (norm(a) * norm(b))
+
+async def get_relevant_context(prompt: str, top_n: int = 2) -> str:
+    """Get relevant context from embeddings for RAG"""
+    if not chunk_embeddings or not article_chunks:
+        logger.warning("⚠️ No embeddings available for RAG")
+        return ""
+    
+    try:
+        # Create embedding for the user's question using Solar embedding API
+        q_embedding = client.embeddings.create(
+            input=prompt, 
+            model="solar-embedding-1-large"
+        ).data[0].embedding
+        
+        # Calculate similarities
+        similarities = [cosine_similarity(q_embedding, emb) for emb in chunk_embeddings]
+        
+        # Get top N most similar chunks
+        top_indices = np.argsort(similarities)[-top_n:][::-1]
+        selected_context = "\n\n".join([article_chunks[i] for i in top_indices])
+        
+        logger.info(f"✅ Retrieved {top_n} relevant chunks (similarities: {[similarities[i]:.3f for i in top_indices]})")
+        return selected_context
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting relevant context: {e}")
+        return ""
 
 # ================================================================================
 # Pydantic Models
@@ -239,12 +298,12 @@ async def fail_webhook_request(request_id: str, error_message: str):
                     req.error_message = error_message
                     in_memory_processing_queue.remove(req)
                     
-                    if req.retry_count >= MAX_RETRY_ATTEMPTS:
-                        in_memory_failed_queue.appendleft(req)
-                        logger.error(f"❌ Request {request_id} moved to failed queue after {req.retry_count} attempts (in-memory)")
-                    else:
+                    if req.retry_count < MAX_RETRY_ATTEMPTS:
                         in_memory_webhook_queue.appendleft(req)
-                        logger.warning(f"⚠️ Request {request_id} re-queued (attempt {req.retry_count}/{MAX_RETRY_ATTEMPTS}) (in-memory)")
+                        logger.info(f"♻️ Retrying request {request_id} (attempt {req.retry_count})")
+                    else:
+                        in_memory_failed_queue.appendleft(req)
+                        logger.error(f"❌ Request {request_id} failed after {MAX_RETRY_ATTEMPTS} attempts")
                     return
             return
         
@@ -258,19 +317,19 @@ async def fail_webhook_request(request_id: str, error_message: str):
                 req.retry_count += 1
                 req.error_message = error_message
                 
-                if req.retry_count >= MAX_RETRY_ATTEMPTS:
-                    await redis_client.lpush(WEBHOOK_FAILED_QUEUE, req.model_dump_json())
-                    await redis_client.lrem(WEBHOOK_PROCESSING_QUEUE, 1, item)
-                    logger.error(f"❌ Request {request_id} moved to failed queue after {req.retry_count} attempts (Redis)")
-                else:
+                await redis_client.lrem(WEBHOOK_PROCESSING_QUEUE, 1, item)
+                
+                if req.retry_count < MAX_RETRY_ATTEMPTS:
                     await redis_client.lpush(WEBHOOK_QUEUE_NAME, req.model_dump_json())
-                    await redis_client.lrem(WEBHOOK_PROCESSING_QUEUE, 1, item)
-                    logger.warning(f"⚠️ Request {request_id} re-queued (attempt {req.retry_count}/{MAX_RETRY_ATTEMPTS}) (Redis)")
+                    logger.info(f"♻️ Retrying request {request_id} (attempt {req.retry_count})")
+                else:
+                    await redis_client.lpush(WEBHOOK_FAILED_QUEUE, req.model_dump_json())
+                    logger.error(f"❌ Request {request_id} failed after {MAX_RETRY_ATTEMPTS} attempts")
                 break
     except Exception as e:
         logger.error(f"❌ Failed to handle failed request: {e}")
 
-async def get_queue_sizes() -> tuple:
+async def get_queue_sizes():
     """Get sizes of all queues"""
     try:
         if use_in_memory_queue:
@@ -281,149 +340,112 @@ async def get_queue_sizes() -> tuple:
             )
         
         if not redis_client:
-            return 0, 0, 0
+            return (0, 0, 0)
         
         queue_size = await redis_client.llen(WEBHOOK_QUEUE_NAME)
         processing_size = await redis_client.llen(WEBHOOK_PROCESSING_QUEUE)
         failed_size = await redis_client.llen(WEBHOOK_FAILED_QUEUE)
-        return queue_size, processing_size, failed_size
+        
+        return (queue_size, processing_size, failed_size)
     except Exception as e:
         logger.error(f"❌ Failed to get queue sizes: {e}")
-        return 0, 0, 0
+        return (0, 0, 0)
 
 # ================================================================================
 # Background Tasks
 # ================================================================================
 
 async def health_check_monitor():
-    """Background task to monitor server health"""
+    """Monitor server health"""
     global server_healthy, unhealthy_count, last_health_check
     
     while True:
         try:
             await asyncio.sleep(HEALTH_CHECK_INTERVAL)
             
-            is_healthy = await perform_health_check()
+            # Test Solar API
+            test_response = client.chat.completions.create(
+                model="solar-mini",
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=5,
+                timeout=2
+            )
             
-            if is_healthy:
+            if test_response.choices[0].message.content:
+                if not server_healthy:
+                    logger.info("✅ Server recovered - healthy")
                 server_healthy = True
                 unhealthy_count = 0
-                logger.debug("✅ Health check passed")
             else:
-                unhealthy_count += 1
-                logger.warning(f"⚠️ Health check failed (count: {unhealthy_count}/{MAX_UNHEALTHY_COUNT})")
+                raise Exception("Empty response from API")
                 
-                if unhealthy_count >= MAX_UNHEALTHY_COUNT:
-                    server_healthy = False
-                    logger.error("❌ Server marked as unhealthy")
-            
-            last_health_check = datetime.now()
-            
         except Exception as e:
-            logger.error(f"❌ Health check monitor error: {e}")
-            await asyncio.sleep(HEALTH_CHECK_INTERVAL)
-
-async def perform_health_check() -> bool:
-    """Perform actual health check"""
-    try:
-        # Test Solar API with a simple request
-        response = client.chat.completions.create(
-            model="solar-mini",
-            messages=[{"role": "user", "content": "test"}],
-            max_tokens=10,
-            timeout=3
-        )
+            unhealthy_count += 1
+            logger.warning(f"⚠️ Health check failed ({unhealthy_count}/{MAX_UNHEALTHY_COUNT}): {e}")
+            
+            if unhealthy_count >= MAX_UNHEALTHY_COUNT:
+                server_healthy = False
+                logger.error("❌ Server marked as unhealthy")
         
-        if not response or not response.choices:
-            return False
-        
-        # Only check Redis if we're using it
-        if redis_client and not use_in_memory_queue:
-            await redis_client.ping()
-        
-        return True
-        
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return False
+        finally:
+            last_health_check = datetime.now()
 
 async def queue_processor():
-    """Background task to process queued webhook requests"""
-    logger.info("🚀 Queue processor started")
+    """Process queued webhook requests"""
+    logger.info("🔄 Queue processor started")
     
     while True:
         try:
-            if not server_healthy:
-                logger.warning("⏸️ Queue processing paused - server unhealthy")
-                await asyncio.sleep(QUEUE_PROCESS_INTERVAL)
+            await asyncio.sleep(QUEUE_PROCESS_INTERVAL)
+            
+            request = await dequeue_webhook_request()
+            if not request:
                 continue
             
-            queued_request = await dequeue_webhook_request()
+            logger.info(f"📤 Processing queued request: {request.request_id}")
             
-            if queued_request:
-                logger.info(f"📥 Processing queued request: {queued_request.request_id}")
+            try:
+                result = await process_solar_rag_request(request.request_body)
+                await complete_webhook_request(request.request_id)
+                logger.info(f"✅ Queued request {request.request_id} completed")
                 
-                try:
-                    result = await process_solar_request(queued_request.request_body)
-                    await complete_webhook_request(queued_request.request_id)
-                    logger.info(f"✅ Queued request {queued_request.request_id} processed successfully")
-                    
-                except Exception as e:
-                    error_msg = f"{type(e).__name__}: {str(e)}"
-                    logger.error(f"❌ Error processing queued request: {error_msg}")
-                    await fail_webhook_request(queued_request.request_id, error_msg)
-            else:
-                await asyncio.sleep(QUEUE_PROCESS_INTERVAL)
+            except Exception as e:
+                error_msg = f"{type(e).__name__}: {str(e)}"
+                logger.error(f"❌ Failed to process queued request: {error_msg}")
+                await fail_webhook_request(request.request_id, error_msg)
                 
         except Exception as e:
             logger.error(f"❌ Queue processor error: {e}")
-            await asyncio.sleep(QUEUE_PROCESS_INTERVAL)
+            await asyncio.sleep(1)
 
 # ================================================================================
-# Helper Functions
+# Core Request Processing with RAG
 # ================================================================================
 
-async def process_solar_request(request_body: dict) -> dict:
-    """Process Solar API request with comprehensive parameter extraction"""
+async def process_solar_rag_request(request_body: dict):
+    """Process request with Solar API + RAG"""
     
-    # 상세 로그: 모든 요청 기록
-    logger.info("="*70)
-    logger.info("🔍 PARAMETER EXTRACTION START")
-    logger.info(f"📋 Full request body: {request_body}")
-    
-    # 다양한 방법으로 prompt 추출 시도
+    # Extract prompt from various possible locations
     prompt = None
     
-    # 방법 1: action.params.prompt (표준)
     if request_body.get("action", {}).get("params", {}).get("prompt"):
         prompt = request_body["action"]["params"]["prompt"]
         logger.info(f"✅ Method 1 (action.params.prompt): '{prompt}'")
     
-    # 방법 2: action.detailParams
-    elif request_body.get("action", {}).get("detailParams", {}):
-        detail_params = request_body["action"]["detailParams"]
-        for key, value in detail_params.items():
-            if isinstance(value, dict) and "value" in value:
-                prompt = value["value"]
-                logger.info(f"✅ Method 2 (detailParams.{key}): '{prompt}'")
-                break
+    elif request_body.get("action", {}).get("detailParams", {}).get("prompt", {}).get("value"):
+        prompt = request_body["action"]["detailParams"]["prompt"]["value"]
+        logger.info(f"✅ Method 2 (action.detailParams.prompt.value): '{prompt}'")
     
-    # 방법 3: userRequest.utterance (카카오톡 직접 발화)
     elif request_body.get("userRequest", {}).get("utterance"):
         prompt = request_body["userRequest"]["utterance"]
         logger.info(f"✅ Method 3 (userRequest.utterance): '{prompt}'")
     
-    # 방법 4: 최상위 utterance
     elif request_body.get("utterance"):
         prompt = request_body["utterance"]
         logger.info(f"✅ Method 4 (utterance): '{prompt}'")
     
-    # prompt를 찾지 못한 경우
     if not prompt or (isinstance(prompt, str) and prompt.strip() == ""):
         logger.warning("⚠️ No prompt found in request!")
-        logger.warning(f"⚠️ Request keys: {list(request_body.keys())}")
-        
-        # 기본 응답
         return {
             "version": "2.0",
             "template": {
@@ -436,21 +458,43 @@ async def process_solar_request(request_body: dict) -> dict:
         }
     
     logger.info(f"📝 Final extracted prompt: '{prompt}'")
-    logger.info("="*70)
     
-    rexa_prompt = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
+    # Get relevant context using RAG
+    context = await get_relevant_context(prompt, top_n=2)
+    
+    # Build the query with context
+    if context:
+        query = f"""Use the below context to answer the question. 
+You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
+Respond politely and with a trustworthy tone, as a professional advisor would. To ensure fast responses, keep your answers under 250 tokens. 
+If you don't know about the information ask the user once more time.
+
+Context:
+\"\"\"
+{context}
+\"\"\"
+
+Question: {prompt}
+
+And please respond in Korean following the above format."""
+        logger.info(f"🔍 Using RAG with {len(context)} chars of context")
+    else:
+        query = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
 Respond politely and with a trustworthy tone, as a professional advisor would. To ensure fast responses, keep your answers under 250 tokens. 
 If you don't know about the information ask the user once more time.
 
 Question: {prompt}
+
 And please respond in Korean following the above format."""
+        logger.info("ℹ️ Processing without RAG context")
     
     logger.info(f"🤖 Calling Solar API with prompt: {prompt[:50]}...")
     
     try:
         response = client.chat.completions.create(
             model="solar-mini",
-            messages=[{"role": "user", "content": rexa_prompt}],
+            messages=[{"role": "user", "content": query}],
+            temperature=0,
             timeout=API_TIMEOUT
         )
         
@@ -487,26 +531,24 @@ And please respond in Korean following the above format."""
 
 @app.get("/")
 def read_root():
-    return {"Hello": "REXA - Real Estate Expert Assistant (Solar)"}
+    return {"Hello": "REXA - Real Estate Expert Assistant (Solar + RAG)"}
 
-@app.post("/generate")
-async def generate_text(request: RequestBody):
-    """REXA 부동산 전문 챗봇 - 카카오톡 5초 제한 대응"""
+@app.post("/custom")
+async def generate_custom(request: RequestBody):
+    """REXA 부동산 전문 챗봇 with RAG - 카카오톡 5초 제한 대응"""
     request_id = str(uuid.uuid4())
     
-    # 상세 로그: 모든 요청 기록
     logger.info("="*50)
-    logger.info(f"📨 New request received: {request_id[:8]}")
+    logger.info(f"📨 New RAG request received: {request_id[:8]}")
     logger.info(f"📋 Full request body: {request.model_dump()}")
     
     try:
         # 3초 타임아웃으로 빠른 응답 시도
-        result = await process_solar_request(request.model_dump())
+        result = await process_solar_rag_request(request.model_dump())
         logger.info(f"✅ Request {request_id[:8]} completed successfully")
         return result
         
     except APITimeoutError as e:
-        # 3초 타임아웃 발생 시
         logger.warning(f"⏰ Timeout (3s) - enqueueing request {request_id}")
         await enqueue_webhook_request(request_id, request.model_dump())
         
@@ -565,7 +607,7 @@ async def health_check() -> HealthStatus:
     return HealthStatus(
         status="healthy" if server_healthy else "unhealthy",
         model="solar-mini",
-        mode="rexa_chatbot",
+        mode="rexa_chatbot_rag",
         server_healthy=server_healthy,
         last_check=last_health_check.isoformat(),
         redis_connected=(redis_client is not None and not use_in_memory_queue),
@@ -580,7 +622,8 @@ async def health_ping():
     return {
         "alive": True,
         "healthy": server_healthy,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "rag_enabled": len(chunk_embeddings) > 0
     }
 
 @app.get("/queue/status")
@@ -593,7 +636,8 @@ async def queue_status():
         "webhook_queue": queue_size,
         "processing_queue": processing_size,
         "failed_queue": failed_size,
-        "total": queue_size + processing_size + failed_size
+        "total": queue_size + processing_size + failed_size,
+        "rag_chunks_loaded": len(article_chunks)
     }
 
 @app.post("/queue/retry-failed")
@@ -638,18 +682,18 @@ async def retry_failed_requests():
 @app.on_event("startup")
 async def startup_event():
     """Initialize resources on startup"""
-    logger.info("🚀 Starting REXA server (Solar)...")
+    logger.info("🚀 Starting REXA server (Solar + RAG)...")
     
     await init_redis()
     
     asyncio.create_task(health_check_monitor())
     asyncio.create_task(queue_processor())
     
-    logger.info("✅ REXA server (Solar) started successfully")
+    logger.info(f"✅ REXA server started - RAG: {len(chunk_embeddings)} chunks loaded")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup resources on shutdown"""
-    logger.info("👋 Shutting down REXA server (Solar)...")
+    logger.info("👋 Shutting down REXA server (Solar + RAG)...")
     await close_redis()
-    logger.info("✅ REXA server (Solar) shut down successfully")
+    logger.info("✅ REXA server shut down successfully")
