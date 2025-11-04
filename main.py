@@ -130,7 +130,9 @@ async def get_relevant_context(prompt: str, top_n: int = 2) -> str:
         top_indices = np.argsort(similarities)[-top_n:][::-1]
         selected_context = "\n\n".join([article_chunks[i] for i in top_indices])
         
-        logger.info(f"✅ Retrieved {top_n} relevant chunks (similarities: {[similarities[i]:.3f for i in top_indices]})")
+        # Format similarities for logging
+        similarity_scores = [f"{similarities[i]:.3f}" for i in top_indices]
+        logger.info(f"✅ Retrieved {top_n} relevant chunks (similarities: {similarity_scores})")
         return selected_context
         
     except Exception as e:
