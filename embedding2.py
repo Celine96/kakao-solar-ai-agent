@@ -1,9 +1,15 @@
 from openai import OpenAI
-
-client = OpenAI(api_key="...")
-
+import os
 import pickle
 
+# Upstage Solar API 클라이언트 설정
+client = OpenAI(
+    api_key="up_MixgDl0HXpwJm7THloh2OjKIH1T8m",  # 환경변수에서 가져오기
+    base_url="https://api.upstage.ai/v1/solar"
+)
+
+print("🔄 Upstage Solar API 클라이언트 설정 완료")
+print(f"   API Key: {os.getenv('up_MixgDl0HXpwJm7THloh2OjKIH1T8m', 'NOT SET')[:20]}...")
 # 서안개발 및 금하빌딩 정보 청크
 article_chunks = [
     # ============================================================
@@ -16,7 +22,7 @@ article_chunks = [
 회사명: 서안개발주식회사 (SUHAN DEVELOPMENT CO., LTD)
 설립일: 1991년 7월 1일
 본점 주소: 서울특별시 강남구 학동로 401 (청담동 41-2, 금하빌딩)
-주요 사업: 부동산 임대 및 관리
+주요 사업: 부동산 임대 및 관리 (부동산임대, 시설관리, 컨설팅)
 
 연혁:
 - 1991년: 서안개발주식회사 설립
@@ -63,8 +69,13 @@ article_chunks = [
 - 강남구청역 (수인분당선, 7호선) 4번 출구 도보 약 1분 거리
 - 매우 편리한 대중교통 접근성
 
+버스 :
+청담동래미안아파트 1분
+
+차량 진출입 : 
+지주식 지상/지하추자장 진입 용이함(램프식 지하주차장)
+
 주변 환경:
-- 청담농협(빈자리마당) 인접
 - 강남구청 인접 (70.5m 거리)
 - 강남 핵심 업무지구 위치
 - 노선 접근성: 7호선, 수인분당선 이용 가능
@@ -81,24 +92,32 @@ article_chunks = [
     # CHUNK 5: 금하빌딩 임대 조건
     """금하빌딩 임대 조건:
 
-보증금 및 임대료 (예시):
-- 보증금: 3억 5,000만원
-- 임대료: 약 2,466만원 (월)
-- 관리비: 약 1,233만원 (월)
-- NOC (냉난방 비용): 270,000원
+임대 정보 CHUNK ① — 11층 (일부)
+금하빌딩11층은효율적인공간활용이가능한사무실을제공합니다. 
+넓은전용면적(143.28평)을통해다양한레이아웃구성이가능하며, 쾌적한업무환경을조성할수있습니다.
+해당층: 11층 (일부)
+-임대면적: 286.56평
+-전용면적: 143.28평
+-보증금: 3억 5,000만원
+-임대료: 2,579만 400원
+-관리비: 1,289만 5,200원
+-NOC (평당 비용): 270,000원
+-입주시기: 2026년 1월 (11층 (일부) → 2025년 12월 말 종료 예정)""",
 
-면적당 비용:
-- 평당 임대료: 약 286,561원
-- 지원비: 137원/평
-- 전용면적: 143.28평
-- 층고: 7,400mm
+    """
+    임대 정보 CHUNK ② — 17층
+하빌딩17층은전용테라스가있어뛰어난조망권을자랑하는프리미엄사무실입니다. 
+전용면적137평으로, 2025년12월중순부터내부공사착수가가능합니다
+해당층: 17층
+-임대면적: 274평
+-전용면적: 137평
+-보증금: 2억 7,400만원
+-임대료: 2,466만원
+-관리비: 1,233만원
+-NOC (평당 비용): 270,000원
+-입주시기: 2026년 1월(2025년 12월 중순 내부공사 착수 가능)""",
 
-계약 조건:
-- 계약기간: 2년 계약 (3기 연장 가능, 쌍방 합의)
-- 평균 임대료: 45,000원/평 (VAT별도)
-- 평당 보증금: 1,000,000원
-- 평당 임대료: 90,000원 (VAT별도)
-
+"""
 주차 조건:
 - 기본 주차: 입대면적 50평당 1대 무상
 - 추가 주차: 대당 200,000원/월
@@ -116,32 +135,31 @@ article_chunks = [
     # CHUNK 6: 금하빌딩 층별 임대 현황
     """금하빌딩 층별 임대 현황 (2025년 10월 기준):
 
-지상층:
-- 17F: 공실 (임대 가능)
-- 16F: 컨설턴트-코리아
-- 15F: 신길종합개발
-- 14F: 한국이즈
-- 13F: 남부공고리아
-- 12F: 한국메이컨
-- 11F: 공실 / DMCD(1)사
-- 10F: 모빌가스
-- 09F: (주)디스코비
-- 08F: (주)벡센스
-- 07F: (주)벡센스
-- 06F: (주)나들
-- 05F: DMCD(1)사
-- 04F: 법무법인 상률
-- 03F: 디즈니팩토리
-- 02F: 인구특허조합, 골든특허, 히든즈특허
-- 01F: 우디오종, 릉부빙
+금하빌딩 층별 임대 현황 (2025년 10월 기준)
 
-지하층:
-- B1F: 식당, 카페, 법무법인 정, 사업가법
-- B2F~B7F: 주차장, 기계실
+17F : 공실
+16F : 콘메드코리아
+15F : 신원종합개발
+14F : 한국마즈
+13F : 니프코코리아
+12F : 한국바이린
+11F : 공실 / DMC미디어
+10F : 로얄캐닌
+09F : (주)인스코비
+08F : (주)엔텔스
+07F : (주)엔텔스
+06F : (주)대농
+05F : DMC미디어
+04F : 법무법인 정률
+03F : 더스킨팩토리
+02F : 한국투자증권, 골든블루, KB손해보험
+01F : 우리은행, 풀바셋
+B1F : 식당, 카페, 법무법인 창, 서안개발
+B2F~B7F : 주차장, 기계실
 
 공실 층:
 - 17층: 현재 임대 가능
-- 11층: 일부 공실 (DMCD와 공유)""",
+- 11층: 일부 공실 (DMC 미디어와 공유)""",
     
     # ============================================================
     # 금하빌딩 문의 정보
@@ -193,7 +211,7 @@ article_chunks = [
 - 강남구청 인접으로 행정 업무 편리
 
 건물 특징:
-- 지상 18층 규모의 중대형 오피스
+- 지상 17층 규모의 중대형 오피스
 - 넉넉한 주차 공간 (222대)
 - 층고 7.4m의 쾌적한 사무 환경
 - 엘리베이터 및 편의시설 완비
@@ -202,32 +220,53 @@ article_chunks = [
 - 서안개발 직접 운영 관리
 - 30년 이상의 건물 관리 노하우
 - 안정적인 임대 운영
-- 입주사 맞춤 서비스 제공
-
-임대 특징:
-- 다양한 면적대 선택 가능
-- 층별 맞춤 임대 조건
-- 장기 임대 우대 조건
-- 공실 시 즉시 입주 가능
-
-주변 편의시설:
-- 1층 우디오종, 릉부빙
-- B1층 식당, 카페 운영
-- 주변 다양한 음식점 및 카페
-- 은행, 편의점 도보 거리""",
+- 입주사 맞춤 서비스 제공""",
 ]
 
 
-chunk_embeddings = [
-    client.embeddings.create(input=chunk, model="text-embedding-3-small").data[0].embedding
-    for chunk in article_chunks
-]
+print(f"\n📝 총 {len(article_chunks)}개의 청크 준비 완료")
+print("\n🔄 Solar Embedding API를 사용하여 임베딩 생성 중...")
 
-# chunk_embeddings = []
-# for chunk in article_chunks:
-#     embedding = client.embeddings.create(input=chunk, model="text-embedding-3-small").data[0].embedding
-#     chunk_embeddings.append(embedding)
+# Solar Embedding API를 사용하여 각 청크에 대한 임베딩 생성
+chunk_embeddings = []
+
+for i, chunk in enumerate(article_chunks, 1):
+    try:
+        print(f"   처리 중: Chunk {i}/{len(article_chunks)}...", end=" ")
+        
+        embedding = client.embeddings.create(
+            input=chunk, 
+            model="solar-embedding-1-large-passage"  # Solar 임베딩 모델 (문서용, 4096 차원)
+        ).data[0].embedding
+        
+        chunk_embeddings.append(embedding)
+        print(f"✅ 완료 (차원: {len(embedding)})")
+        
+    except Exception as e:
+        print(f"❌ 실패")
+        print(f"   에러: {e}")
+        raise
+
+# 임베딩 데이터를 pickle 파일로 저장
+print("\n💾 embeddings.pkl 파일로 저장 중...")
 
 with open("embeddings.pkl", "wb") as f:
-    pickle.dump({"chunks": article_chunks, "embeddings": chunk_embeddings}, f)
+    pickle.dump({
+        "chunks": article_chunks, 
+        "embeddings": chunk_embeddings
+    }, f)
 
+print("\n" + "="*70)
+print("✅ 성공적으로 완료!")
+print("="*70)
+print(f"📊 청크 개수: {len(article_chunks)}")
+print(f"📊 임베딩 차원: {len(chunk_embeddings[0])}")
+print(f"📊 파일 크기: {os.path.getsize('embeddings.pkl') / 1024:.2f} KB")
+print("="*70)
+print("\n💡 다음 단계:")
+print("   1. embeddings.pkl 파일을 프로젝트 루트에 배치")
+print("   2. main.py와 함께 Git에 커밋")
+print("   3. Render에 배포")
+print("\n🔑 필요한 환경변수:")
+print("   - UPSTAGE_API_KEY (이미 사용 중)")
+print("   - OPENAI_API_KEY는 필요 없음! (Solar만 사용)")
