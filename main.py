@@ -516,10 +516,7 @@ Respond politely and with a trustworthy tone, as a professional advisor would.
 - 평당 임대보증금: 1,221,380원
 - 임대료: 2,579만 400원"
 
-**중요 제약사항:**
-- 금하빌딩 17층은 이미 임대가 완료되어 현재 공실이 아닙니다.
-- 17층 관련 임대 정보(면적, 보증금, 임대료 등)는 절대 제공하지 마세요.
-- 사용자가 17층이나 공실에 대해 물어보면, "11층 일부만 공실이며, 17층은 임대 완료되었습니다"라고 안내해주세요.
+
 
 Context:
 \"\"\"
@@ -540,10 +537,6 @@ Respond politely and with a trustworthy tone, as a professional advisor would.
 - 불필요한 서술형 설명은 최소화하고 핵심 정보만 전달
 - 숫자 정보는 명확하고 간결하게 표시
 
-**중요 제약사항:**
-- 금하빌딩 17층은 이미 임대가 완료되어 현재 공실이 아닙니다.
-- 17층 관련 임대 정보는 제공하지 마세요.
-- 공실 문의 시 "11층 일부만 공실입니다"라고 안내하세요.
 
 Question: {prompt}
 
