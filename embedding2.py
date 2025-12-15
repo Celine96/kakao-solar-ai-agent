@@ -134,7 +134,7 @@ article_chunks = [
 
 청담동 금하빌딩 층별 임대 현황 (2025년 10월 기준)
 
-17F : 공실
+17F : 임대완료
 16F : 콘메드코리아(유)
 15F : 신원종합개발(주)
 14F : 한국마즈(유)
@@ -671,18 +671,98 @@ for i, chunk in enumerate(article_chunks, 1):
 # 임베딩 데이터를 pickle 파일로 저장
 print("\n💾 embeddings.pkl 파일로 저장 중...")
 
+# 메타데이터 정의 (각 청크에 대한 매물 타입 정보)
+chunk_metadata = []
+
+# 청크 개수에 맞춰 메타데이터 생성
+for i, chunk in enumerate(article_chunks):
+    chunk_lower = chunk.lower()
+    
+    # TYPE_A: 서안개발 보유 자산
+    if "금하빌딩" in chunk and "서안개발" in chunk:
+        chunk_metadata.append({"type": "TYPE_A", "name": "금하빌딩", "address": "서울특별시 강남구 학동로 401"})
+    elif "서교동 328-26" in chunk:
+        chunk_metadata.append({"type": "TYPE_A", "name": "서교동 328-26", "address": "서울 마포구 서교동 328-26"})
+    
+    # 기타 일반 정보
+    elif "서안개발주식회사" in chunk and "설립일" in chunk:
+        chunk_metadata.append({"type": "COMPANY_INFO", "name": "서안개발"})
+    elif "상가건물 임대차보호법" in chunk or "양도소득세" in chunk or "취득세" in chunk:
+        chunk_metadata.append({"type": "LEGAL_INFO", "name": "법률 정보"})
+    
+    # TYPE_B: 비제휴 중개사 매물
+    else:
+        # 주소에서 매물명 추출 시도
+        property_name = ""
+        if "더베스트" in chunk:
+            property_name = "더베스트 신길동"
+        elif "소담빌딩" in chunk:
+            property_name = "소담빌딩"
+        elif "호암빌딩" in chunk:
+            property_name = "호암빌딩"
+        elif "남산빌" in chunk:
+            property_name = "남산빌"
+        elif "보성럭스타운" in chunk:
+            property_name = "보성럭스타운"
+        elif "문래동 카페" in chunk:
+            property_name = "문래동 카페건물"
+        elif "또똣온반" in chunk:
+            property_name = "양평동 또똣온반"
+        elif "신내동" in chunk and "신축" in chunk:
+            property_name = "신내동 신축 꼬마빌딩"
+        elif "미싱" in chunk:
+            property_name = "상봉동 종합미싱총판"
+        elif "양지식" in chunk:
+            property_name = "종로 양지식"
+        elif "루미에르" in chunk:
+            property_name = "영등포 루미에르"
+        elif "잠원동" in chunk and "상가" in chunk:
+            property_name = "잠원동 상가·사무실"
+        elif "신림동 255-283" in chunk:
+            property_name = "신림동 255-283"
+        elif "시흥동 237-37" in chunk:
+            property_name = "시흥동 237-37"
+        elif "시흥동 115-8" in chunk:
+            property_name = "시흥동 115-8"
+        elif "논현동" in chunk:
+            property_name = "논현동 매물"
+        elif "청담동" in chunk:
+            property_name = "청담동 매물"
+        elif "대치동" in chunk and "889-40" in chunk:
+            property_name = "대치동 889-40"
+        elif "성내동" in chunk:
+            property_name = "성내동 130-50"
+        elif "제기동" in chunk:
+            property_name = "제기동 792-2"
+        else:
+            property_name = "기타 매물"
+        
+        chunk_metadata.append({"type": "TYPE_B", "name": property_name, "address": ""})
+
+print(f"메타데이터 개수: {len(chunk_metadata)}")
+
 with open("embeddings.pkl", "wb") as f:
     pickle.dump({
         "chunks": article_chunks, 
-        "embeddings": chunk_embeddings
+        "embeddings": chunk_embeddings,
+        "metadata": chunk_metadata  # 메타데이터 추가
     }, f)
 
 print("\n" + "="*70)
 print("✅ 성공적으로 완료!")
 print("="*70)
 print(f"📊 청크 개수: {len(article_chunks)}")
+print(f"📊 메타데이터 개수: {len(chunk_metadata)}")
 print(f"📊 임베딩 차원: {len(chunk_embeddings[0])}")
 print(f"📊 파일 크기: {os.path.getsize('embeddings.pkl') / 1024:.2f} KB")
+print("="*70)
+type_a_count = len([m for m in chunk_metadata if m["type"] == "TYPE_A"])
+type_b_count = len([m for m in chunk_metadata if m["type"] == "TYPE_B"])
+other_count = len(chunk_metadata) - type_a_count - type_b_count
+print(f"📋 매물 타입 분포:")
+print(f"   TYPE_A (서안개발 보유): {type_a_count}개")
+print(f"   TYPE_B (비제휴 매물): {type_b_count}개")
+print(f"   기타 (회사 정보, 법률 정보): {other_count}개")
 print("="*70)
 print("\n💡 다음 단계:")
 print("   1. embeddings.pkl 파일을 프로젝트 루트에 배치")
