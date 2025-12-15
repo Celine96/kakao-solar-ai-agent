@@ -679,7 +679,8 @@ for i, chunk in enumerate(article_chunks):
     chunk_lower = chunk.lower()
     
     # TYPE_A: 서안개발 보유 자산
-    if "금하빌딩" in chunk and "서안개발" in chunk:
+    # 금하빌딩 또는 서교동 328-26이 있으면 무조건 TYPE_A
+    if "금하빌딩" in chunk:
         chunk_metadata.append({"type": "TYPE_A", "name": "금하빌딩", "address": "서울특별시 강남구 학동로 401"})
     elif "서교동 328-26" in chunk:
         chunk_metadata.append({"type": "TYPE_A", "name": "서교동 328-26", "address": "서울 마포구 서교동 328-26"})
