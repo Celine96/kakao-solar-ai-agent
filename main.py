@@ -565,7 +565,8 @@ async def process_solar_rag_request(request_body: dict):
 - 구체적인 층수, 호수는 "X층", "약 XX평대" 등으로 표시
 - 가격은 "참고가" 또는 "거래 사례" 수준으로만 안내
 - 반드시 하단에 "ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요" 문구 포함
-- 최대 250 토큰 이내로 간결하게
+- 최대 200 토큰 이내로 간결하게
+- [시장 동향] 섹션은 사용자가 명시적으로 "거래 사례" 또는 "시세 비교"를 요청할 때만 포함
 
 예시 응답 형식:
 [시장 참고 정보] {지역명} 일대 {건물 유형}
@@ -574,14 +575,9 @@ async def process_solar_rag_request(request_body: dict):
 * 시세: {가격대} (참고가)
 * 규모: 약 {평수}평대
 
-[시장 동향] {지역명} {건물 유형} 거래 사례
-📊 최근 거래 사례 (2025년 기준)
-* 위치: {지역} 일대
-* 거래가: {가격대}
-* 규모: {평수대}
-* 특징: {간략 특징}
+ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요
 
-ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요"""
+**중요: [시장 동향] 섹션은 사용자가 거래 사례나 시세 비교를 명시적으로 요청하지 않으면 절대 포함하지 마세요.**"""
 
         query = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
 Respond politely and with a trustworthy tone, as a professional advisor would.
