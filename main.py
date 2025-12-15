@@ -60,7 +60,7 @@ MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", 3))
 QUEUE_PROCESS_INTERVAL = int(os.getenv("QUEUE_PROCESS_INTERVAL", 5))
 
 # API Timeout Configuration
-API_TIMEOUT = int(os.getenv("API_TIMEOUT", 3))
+API_TIMEOUT = int(os.getenv("API_TIMEOUT", 4))  # 카카오톡 5초 제한 고려
 
 # Global state
 redis_client: Optional[Any] = None
@@ -528,7 +528,7 @@ async def process_solar_rag_request(request_body: dict):
     logger.info(f"📝 Final extracted prompt: '{prompt}'")
     
     # Get relevant context using RAG
-    rag_result = await get_relevant_context(prompt, top_n=2)
+    rag_result = await get_relevant_context(prompt, top_n=1)  # 속도 최적화: 2->1
     context = rag_result["context"]
     property_type = rag_result["property_type"]
     property_name = rag_result["property_name"]
@@ -538,76 +538,30 @@ async def process_solar_rag_request(request_body: dict):
         # 매물 타입에 따른 프롬프트 구성
         if property_type == "TYPE_A":
             # 서안개발 보유 자산 - 직접 상담 가능
-            response_guide = """**응답 형식 가이드 (TYPE_A - 서안개발 보유 자산):**
-- 반드시 "[서안개발 보유 자산]" 태그로 시작
-- 정확한 주소 및 상세 정보 제공
-- 임대/매매 조건 명확히 표시
-- 반드시 상담 연락처 포함: "📞 매매 상담: 서안개발 컨설팅팀 02-3443-0724"
-- 이모지 사용하여 가독성 향상 (📍🏢💰📞 등)
-- 최대 300 토큰 이내로 상세하되 간결하게
-
-예시 응답 형식:
-[서안개발 보유 자산] {건물명}
-📍 {정확한 주소}
-* {교통 정보}
-🏢 건물 정보:
-* {건물 정보}
-💰 매매/임대 정보:
-* {가격 정보}
-본 건물은 서안개발이 직접 보유한 자산입니다.
-📞 매매 상담: 서안개발 컨설팅팀 02-3443-0724"""
+            response_guide = """[서안개발 보유 자산] 태그 필수!
+정확한 주소, 가격, 조건 포함.
+반드시 마지막에: 📞 매매 상담: 서안개발 컨설팅팀 02-3443-0724
+200 토큰 이내."""
         
         else:
             # 비제휴 중개사 매물 - 시장 참고 정보로만 제공
-            response_guide = """**응답 형식 가이드 (TYPE_B - 시장 참고 정보):**
-- 반드시 "[시장 참고 정보]" 태그로 시작
-- 상세 주소는 숨기고 "○○구 ○○동 일대" 수준으로만 표시
-- 구체적인 층수, 호수는 "X층", "약 XX평대" 등으로 표시
-- 가격은 "참고가" 또는 "거래 사례" 수준으로만 안내
-- 반드시 하단에 "ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요" 문구 포함
-- 최대 200 토큰 이내로 간결하게
-- [시장 동향] 섹션은 사용자가 명시적으로 "거래 사례" 또는 "시세 비교"를 요청할 때만 포함
+            response_guide = """[시장 참고 정보] 태그 필수!
+주소는 "○○구 ○○동 일대"만. 층수/호수는 "X층", "약 XX평대".
+가격은 "○○억원대 (참고가)".
+마지막에 반드시: ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요
+150 토큰 이내.
+[시장 동향] 섹션은 사용자가 "거래 사례" 요청 시만."""
 
-예시 응답 형식:
-[시장 참고 정보] {지역명} 일대 {건물 유형}
-* 위치: {구} {동} 일대 (상세 주소는 문의 시 안내)
-* 건물: {간략 정보}
-* 시세: {가격대} (참고가)
-* 규모: 약 {평수}평대
+        query = f"""REXA 부동산 전문가. 간결하고 정확하게.
 
-ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요
-
-**중요: [시장 동향] 섹션은 사용자가 거래 사례나 시세 비교를 명시적으로 요청하지 않으면 절대 포함하지 마세요.**"""
-
-        query = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
-Respond politely and with a trustworthy tone, as a professional advisor would.
-
-**IMPORTANT - Property Type Classification:**
-Property Type: {property_type}
-Property Name: {property_name}
-
+Type: {property_type} - {property_name}
 {response_guide}
 
-**Context:**
-\"\"\"
-{context}
-\"\"\"
+Context: {context}
 
-**Question:** {prompt}
+질문: {prompt}
 
-**CRITICAL COMPLIANCE RULES:**
-1. If TYPE_A (서안개발 보유 자산): 
-   - Must include "[서안개발 보유 자산]" tag
-   - Provide full address and contact info
-   - Must include: "📞 매매 상담: 서안개발 컨설팅팀 02-3443-0724"
-
-2. If TYPE_B (비제휴 매물):
-   - Must include "[시장 참고 정보]" tag
-   - Hide detailed address (use "○○구 ○○동 일대")
-   - Use approximate numbers (X층, 약 XX평대, XX억원대)
-   - Must include: "ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요"
-
-Please respond in Korean following the exact format above."""
+한국어로 응답. 200 토큰 이내."""
         
         logger.info(f"🔍 Using RAG with {len(context)} chars of context")
         logger.info(f"🏷️ Property Type: {property_type} ({property_name})")
@@ -634,7 +588,8 @@ And please respond in Korean following the above format."""
         response = client.chat.completions.create(
             model="solar-mini",
             messages=[{"role": "user", "content": query}],
-            temperature=0,
+            temperature=0.3,  # 속도 개선 (0 -> 0.3)
+            max_tokens=400,  # 응답 길이 제한 (속도 향상)
             timeout=API_TIMEOUT
         )
         
