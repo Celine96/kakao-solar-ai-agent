@@ -92,14 +92,18 @@ logger.info("✅ Upstage Solar API client configured")
 
 article_chunks = []
 chunk_embeddings = []
+chunk_metadata = []  # 매물 타입 메타데이터 추가
 
 try:
     with open("embeddings.pkl", "rb") as f:
         data = pickle.load(f)
         article_chunks = data["chunks"]
         chunk_embeddings = data["embeddings"]
+        # 매물 타입 메타데이터가 있으면 로드, 없으면 빈 리스트
+        chunk_metadata = data.get("metadata", [])
     logger.info(f"✅ Loaded {len(article_chunks)} chunks from embeddings.pkl")
     logger.info(f"✅ RAG is ENABLED with {len(article_chunks)} chunks")
+    logger.info(f"✅ Metadata loaded: {len(chunk_metadata)} entries")
 except FileNotFoundError:
     logger.warning("⚠️ embeddings.pkl not found - RAG will not be available")
     logger.warning("⚠️ Server will continue WITHOUT RAG - responses will be general")
@@ -118,11 +122,17 @@ def cosine_similarity(a, b):
     from numpy.linalg import norm
     return dot(a, b) / (norm(a) * norm(b))
 
-async def get_relevant_context(prompt: str, top_n: int = 2) -> str:
-    """Get relevant context from embeddings for RAG"""
+async def get_relevant_context(prompt: str, top_n: int = 2) -> dict:
+    """Get relevant context from embeddings for RAG
+    Returns: {
+        'context': str,
+        'property_type': str,  # 'TYPE_A' or 'TYPE_B'
+        'property_name': str
+    }
+    """
     if not chunk_embeddings or not article_chunks:
         logger.warning("⚠️ No embeddings available for RAG")
-        return ""
+        return {"context": "", "property_type": "UNKNOWN", "property_name": ""}
     
     try:
         # 임베딩 차원 자동 감지
@@ -142,7 +152,7 @@ async def get_relevant_context(prompt: str, top_n: int = 2) -> str:
             except Exception as e:
                 logger.error(f"❌ OpenAI embedding failed: {e}")
                 logger.info("💡 Set OPENAI_API_KEY environment variable")
-                return ""
+                return {"context": "", "property_type": "UNKNOWN", "property_name": ""}
                 
         else:
             # Solar 임베딩 (모든 다른 차원)
@@ -155,7 +165,7 @@ async def get_relevant_context(prompt: str, top_n: int = 2) -> str:
             except Exception as e:
                 logger.error(f"❌ Solar embedding failed: {e}")
                 logger.error(f"   Model: solar-embedding-1-large-query")
-                return ""
+                return {"context": "", "property_type": "UNKNOWN", "property_name": ""}
         
         # Calculate similarities
         similarities = [cosine_similarity(q_embedding, emb) for emb in chunk_embeddings]
@@ -164,14 +174,44 @@ async def get_relevant_context(prompt: str, top_n: int = 2) -> str:
         top_indices = np.argsort(similarities)[-top_n:][::-1]
         selected_context = "\n\n".join([article_chunks[i] for i in top_indices])
         
+        # 매물 타입 판단 (메타데이터가 있으면 사용, 없으면 텍스트 기반 판단)
+        property_type = "TYPE_B"  # 기본값: 비제휴 중개사 매물
+        property_name = ""
+        
+        if chunk_metadata and len(chunk_metadata) > top_indices[0]:
+            # 메타데이터가 있으면 사용
+            meta = chunk_metadata[top_indices[0]]
+            property_type = meta.get("type", "TYPE_B")
+            property_name = meta.get("name", "")
+            logger.info(f"✅ Using metadata: {property_type} - {property_name}")
+        else:
+            # 메타데이터가 없으면 텍스트 기반 판단
+            top_chunk = article_chunks[top_indices[0]]
+            if "금하빌딩" in top_chunk and "서안개발" in top_chunk:
+                property_type = "TYPE_A"
+                property_name = "금하빌딩"
+                logger.info(f"✅ Detected TYPE_A (서안개발 보유): {property_name}")
+            else:
+                # 매물명 추출 시도
+                for line in top_chunk.split('\n'):
+                    if '건물' in line or '매물' in line:
+                        property_name = line.split(':')[0].strip() if ':' in line else ""
+                        break
+                logger.info(f"✅ Detected TYPE_B (비제휴 매물): {property_name}")
+        
         # Format similarities for logging
         similarity_scores = [f"{similarities[i]:.3f}" for i in top_indices]
         logger.info(f"✅ Retrieved {top_n} relevant chunks (similarities: {similarity_scores})")
-        return selected_context
+        
+        return {
+            "context": selected_context,
+            "property_type": property_type,
+            "property_name": property_name
+        }
         
     except Exception as e:
         logger.error(f"❌ Error getting relevant context: {e}")
-        return ""
+        return {"context": "", "property_type": "UNKNOWN", "property_name": ""}
 
 # ================================================================================
 # Pydantic Models
@@ -234,19 +274,18 @@ async def init_redis():
         use_in_memory_queue = False
     except Exception as e:
         logger.warning(f"⚠️ Redis connection failed: {e}")
-        logger.info("📦 Using in-memory queue as fallback")
-        redis_client = None
+        logger.warning("⚠️ Using in-memory queue instead")
         use_in_memory_queue = True
 
 async def close_redis():
     """Close Redis connection"""
     global redis_client
-    if redis_client:
+    if redis_client and not use_in_memory_queue:
         await redis_client.close()
-        logger.info("Redis connection closed")
+        logger.info("✅ Redis connection closed")
 
-async def enqueue_webhook_request(request_id: str, request_body: dict) -> bool:
-    """Add webhook request to queue"""
+async def enqueue_webhook_request(request_id: str, request_body: dict):
+    """Enqueue a webhook request for later processing"""
     try:
         queued_request = QueuedRequest(
             request_id=request_id,
@@ -256,117 +295,107 @@ async def enqueue_webhook_request(request_id: str, request_body: dict) -> bool:
         )
         
         if use_in_memory_queue:
-            in_memory_webhook_queue.appendleft(queued_request)
-            logger.info(f"✅ Request {request_id} enqueued (in-memory)")
-            return True
-        
-        if not redis_client:
-            logger.warning("Queue not available - cannot enqueue request")
-            return False
-        
-        await redis_client.lpush(
-            WEBHOOK_QUEUE_NAME,
-            queued_request.model_dump_json()
-        )
-        logger.info(f"✅ Request {request_id} enqueued (Redis)")
-        return True
+            in_memory_webhook_queue.append(queued_request)
+            logger.info(f"✅ Enqueued to in-memory queue: {request_id}")
+        else:
+            if redis_client:
+                await redis_client.lpush(
+                    WEBHOOK_QUEUE_NAME,
+                    queued_request.model_dump_json()
+                )
+                logger.info(f"✅ Enqueued to Redis: {request_id}")
     except Exception as e:
         logger.error(f"❌ Failed to enqueue request: {e}")
-        return False
 
 async def dequeue_webhook_request() -> Optional[QueuedRequest]:
-    """Get next webhook request from queue"""
+    """Dequeue the next webhook request"""
     try:
         if use_in_memory_queue:
-            if len(in_memory_webhook_queue) > 0:
-                request = in_memory_webhook_queue.pop()
-                in_memory_processing_queue.appendleft(request)
-                return request
-            return None
+            if len(in_memory_webhook_queue) == 0:
+                return None
+            req = in_memory_webhook_queue.popleft()
+            in_memory_processing_queue.append(req)
+            return req
         
         if not redis_client:
             return None
         
-        result = await redis_client.brpoplpush(
+        request_json = await redis_client.rpoplpush(
             WEBHOOK_QUEUE_NAME,
-            WEBHOOK_PROCESSING_QUEUE,
-            timeout=1
+            WEBHOOK_PROCESSING_QUEUE
         )
         
-        if result:
-            return QueuedRequest.model_validate_json(result)
-        return None
+        if not request_json:
+            return None
+        
+        return QueuedRequest.model_validate_json(request_json)
+        
     except Exception as e:
         logger.error(f"❌ Failed to dequeue request: {e}")
         return None
 
 async def complete_webhook_request(request_id: str):
-    """Mark webhook request as completed"""
+    """Mark a webhook request as completed"""
     try:
         if use_in_memory_queue:
-            for req in list(in_memory_processing_queue):
-                if req.request_id == request_id:
-                    in_memory_processing_queue.remove(req)
-                    logger.info(f"✅ Request {request_id} completed (in-memory)")
-                    return
-            return
-        
-        if not redis_client:
-            return
-        
-        processing_items = await redis_client.lrange(WEBHOOK_PROCESSING_QUEUE, 0, -1)
-        for item in processing_items:
-            req = QueuedRequest.model_validate_json(item)
-            if req.request_id == request_id:
-                await redis_client.lrem(WEBHOOK_PROCESSING_QUEUE, 1, item)
-                logger.info(f"✅ Request {request_id} completed (Redis)")
-                break
+            in_memory_processing_queue = deque([
+                req for req in in_memory_processing_queue 
+                if req.request_id != request_id
+            ])
+        else:
+            if redis_client:
+                items = await redis_client.lrange(WEBHOOK_PROCESSING_QUEUE, 0, -1)
+                for item in items:
+                    req = QueuedRequest.model_validate_json(item)
+                    if req.request_id == request_id:
+                        await redis_client.lrem(WEBHOOK_PROCESSING_QUEUE, 1, item)
+                        break
     except Exception as e:
         logger.error(f"❌ Failed to complete request: {e}")
 
 async def fail_webhook_request(request_id: str, error_message: str):
-    """Move failed request to failed queue or retry"""
+    """Move a failed webhook request to the failed queue"""
     try:
         if use_in_memory_queue:
-            for req in list(in_memory_processing_queue):
+            for req in in_memory_processing_queue:
                 if req.request_id == request_id:
                     req.retry_count += 1
                     req.error_message = error_message
-                    in_memory_processing_queue.remove(req)
                     
-                    if req.retry_count < MAX_RETRY_ATTEMPTS:
-                        in_memory_webhook_queue.appendleft(req)
-                        logger.info(f"♻️ Retrying request {request_id} (attempt {req.retry_count})")
+                    if req.retry_count >= MAX_RETRY_ATTEMPTS:
+                        in_memory_failed_queue.append(req)
+                        in_memory_processing_queue.remove(req)
                     else:
-                        in_memory_failed_queue.appendleft(req)
-                        logger.error(f"❌ Request {request_id} failed after {MAX_RETRY_ATTEMPTS} attempts")
-                    return
-            return
-        
-        if not redis_client:
-            return
-        
-        processing_items = await redis_client.lrange(WEBHOOK_PROCESSING_QUEUE, 0, -1)
-        for item in processing_items:
-            req = QueuedRequest.model_validate_json(item)
-            if req.request_id == request_id:
-                req.retry_count += 1
-                req.error_message = error_message
-                
-                await redis_client.lrem(WEBHOOK_PROCESSING_QUEUE, 1, item)
-                
-                if req.retry_count < MAX_RETRY_ATTEMPTS:
-                    await redis_client.lpush(WEBHOOK_QUEUE_NAME, req.model_dump_json())
-                    logger.info(f"♻️ Retrying request {request_id} (attempt {req.retry_count})")
-                else:
-                    await redis_client.lpush(WEBHOOK_FAILED_QUEUE, req.model_dump_json())
-                    logger.error(f"❌ Request {request_id} failed after {MAX_RETRY_ATTEMPTS} attempts")
-                break
+                        in_memory_webhook_queue.appendleft(req)
+                        in_memory_processing_queue.remove(req)
+                    break
+        else:
+            if redis_client:
+                items = await redis_client.lrange(WEBHOOK_PROCESSING_QUEUE, 0, -1)
+                for item in items:
+                    req = QueuedRequest.model_validate_json(item)
+                    if req.request_id == request_id:
+                        req.retry_count += 1
+                        req.error_message = error_message
+                        
+                        await redis_client.lrem(WEBHOOK_PROCESSING_QUEUE, 1, item)
+                        
+                        if req.retry_count >= MAX_RETRY_ATTEMPTS:
+                            await redis_client.lpush(
+                                WEBHOOK_FAILED_QUEUE,
+                                req.model_dump_json()
+                            )
+                        else:
+                            await redis_client.lpush(
+                                WEBHOOK_QUEUE_NAME,
+                                req.model_dump_json()
+                            )
+                        break
     except Exception as e:
-        logger.error(f"❌ Failed to handle failed request: {e}")
+        logger.error(f"❌ Failed to fail request: {e}")
 
 async def get_queue_sizes():
-    """Get sizes of all queues"""
+    """Get current queue sizes"""
     try:
         if use_in_memory_queue:
             return (
@@ -383,6 +412,7 @@ async def get_queue_sizes():
         failed_size = await redis_client.llen(WEBHOOK_FAILED_QUEUE)
         
         return (queue_size, processing_size, failed_size)
+        
     except Exception as e:
         logger.error(f"❌ Failed to get queue sizes: {e}")
         return (0, 0, 0)
@@ -392,8 +422,10 @@ async def get_queue_sizes():
 # ================================================================================
 
 async def health_check_monitor():
-    """Monitor server health"""
+    """Monitor Solar API health"""
     global server_healthy, unhealthy_count, last_health_check
+    
+    logger.info("🏥 Health check monitor started")
     
     while True:
         try:
@@ -496,37 +528,94 @@ async def process_solar_rag_request(request_body: dict):
     logger.info(f"📝 Final extracted prompt: '{prompt}'")
     
     # Get relevant context using RAG
-    context = await get_relevant_context(prompt, top_n=2)
+    rag_result = await get_relevant_context(prompt, top_n=2)
+    context = rag_result["context"]
+    property_type = rag_result["property_type"]
+    property_name = rag_result["property_name"]
     
-    # Build the query with context
+    # Build the query with context based on property type
     if context:
-        query = f"""Use the below context to answer the question. 
-You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
+        # 매물 타입에 따른 프롬프트 구성
+        if property_type == "TYPE_A":
+            # 서안개발 보유 자산 - 직접 상담 가능
+            response_guide = """**응답 형식 가이드 (TYPE_A - 서안개발 보유 자산):**
+- 반드시 "[서안개발 보유 자산]" 태그로 시작
+- 정확한 주소 및 상세 정보 제공
+- 임대/매매 조건 명확히 표시
+- 반드시 상담 연락처 포함: "📞 매매 상담: 서안개발 컨설팅팀 02-3443-0724"
+- 이모지 사용하여 가독성 향상 (📍🏢💰📞 등)
+- 최대 300 토큰 이내로 상세하되 간결하게
+
+예시 응답 형식:
+[서안개발 보유 자산] {건물명}
+📍 {정확한 주소}
+* {교통 정보}
+🏢 건물 정보:
+* {건물 정보}
+💰 매매/임대 정보:
+* {가격 정보}
+본 건물은 서안개발이 직접 보유한 자산입니다.
+📞 매매 상담: 서안개발 컨설팅팀 02-3443-0724"""
+        
+        else:
+            # 비제휴 중개사 매물 - 시장 참고 정보로만 제공
+            response_guide = """**응답 형식 가이드 (TYPE_B - 시장 참고 정보):**
+- 반드시 "[시장 참고 정보]" 태그로 시작
+- 상세 주소는 숨기고 "○○구 ○○동 일대" 수준으로만 표시
+- 구체적인 층수, 호수는 "X층", "약 XX평대" 등으로 표시
+- 가격은 "참고가" 또는 "거래 사례" 수준으로만 안내
+- 반드시 하단에 "ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요" 문구 포함
+- 최대 250 토큰 이내로 간결하게
+
+예시 응답 형식:
+[시장 참고 정보] {지역명} 일대 {건물 유형}
+* 위치: {구} {동} 일대 (상세 주소는 문의 시 안내)
+* 건물: {간략 정보}
+* 시세: {가격대} (참고가)
+* 규모: 약 {평수}평대
+
+[시장 동향] {지역명} {건물 유형} 거래 사례
+📊 최근 거래 사례 (2025년 기준)
+* 위치: {지역} 일대
+* 거래가: {가격대}
+* 규모: {평수대}
+* 특징: {간략 특징}
+
+ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요"""
+
+        query = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
 Respond politely and with a trustworthy tone, as a professional advisor would.
 
-**응답 형식 가이드 (매우 중요):**
-- 최대 200 토큰 이내로 간결하게 답변
-- 임대조건, 건물정보 등 정보성 내용은 반드시 요약 형식으로 제공
-- 불필요한 서술형 설명은 최소화하고 핵심 정보만 전달
-- 숫자 정보는 명확하고 간결하게 표시
-- 예시: "- 해당층: 11층 (일부)
-- 임대면적: 286.56평
-- 전용면적: 143.28평
-- 보증금: 3억 5,000만원
-- 평당 임대보증금: 1,221,380원
-- 임대료: 2,579만 400원"
+**IMPORTANT - Property Type Classification:**
+Property Type: {property_type}
+Property Name: {property_name}
 
+{response_guide}
 
-
-Context:
+**Context:**
 \"\"\"
 {context}
 \"\"\"
 
-Question: {prompt}
+**Question:** {prompt}
 
-And please respond in Korean following the above format."""
+**CRITICAL COMPLIANCE RULES:**
+1. If TYPE_A (서안개발 보유 자산): 
+   - Must include "[서안개발 보유 자산]" tag
+   - Provide full address and contact info
+   - Must include: "📞 매매 상담: 서안개발 컨설팅팀 02-3443-0724"
+
+2. If TYPE_B (비제휴 매물):
+   - Must include "[시장 참고 정보]" tag
+   - Hide detailed address (use "○○구 ○○동 일대")
+   - Use approximate numbers (X층, 약 XX평대, XX억원대)
+   - Must include: "ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요"
+
+Please respond in Korean following the exact format above."""
+        
         logger.info(f"🔍 Using RAG with {len(context)} chars of context")
+        logger.info(f"🏷️ Property Type: {property_type} ({property_name})")
+    
     else:
         query = f"""You are REXA, a chatbot that is a real estate expert with 10 years of experience in taxation (capital gains tax, property holding tax, gift/inheritance tax, acquisition tax), auctions, civil law, and building law. 
 Respond politely and with a trustworthy tone, as a professional advisor would.
@@ -804,12 +893,13 @@ async def retry_failed_requests():
 async def startup_event():
     """Initialize resources on startup"""
     logger.info("="*70)
-    logger.info("🚀 Starting REXA server (Solar + RAG)...")
+    logger.info("🚀 Starting REXA server (Solar + RAG + Property Type Detection)...")
     logger.info("="*70)
     
     # RAG 상태 확인
     if len(chunk_embeddings) > 0:
         logger.info(f"✅ RAG ENABLED: {len(chunk_embeddings)} chunks loaded")
+        logger.info(f"✅ Metadata loaded: {len(chunk_metadata)} entries")
     else:
         logger.warning("⚠️ RAG DISABLED: No embeddings loaded")
         logger.warning("⚠️ Server will work but without company-specific knowledge")
@@ -825,6 +915,7 @@ async def startup_event():
     logger.info("✅ REXA server startup complete!")
     logger.info(f"   - Model: solar-mini")
     logger.info(f"   - RAG chunks: {len(chunk_embeddings)}")
+    logger.info(f"   - Metadata entries: {len(chunk_metadata)}")
     logger.info(f"   - Redis: {'connected' if redis_client else 'in-memory queue'}")
     logger.info("="*70)
 
