@@ -691,50 +691,64 @@ for i, chunk in enumerate(article_chunks):
     elif "상가건물 임대차보호법" in chunk or "양도소득세" in chunk or "취득세" in chunk:
         chunk_metadata.append({"type": "LEGAL_INFO", "name": "법률 정보"})
     
-    # TYPE_B: 비제휴 중개사 매물
+    # TYPE_B: 비제휴 중개사 매물 (지번 기반 분류)
     else:
-        # 주소에서 매물명 추출 시도
+        # 지번 주소로 매물 식별 (고유성, 정확성, 유지보수성 우수)
         property_name = ""
-        if "더베스트" in chunk:
-            property_name = "더베스트 신길동"
-        elif "소담빌딩" in chunk:
-            property_name = "소담빌딩"
-        elif "호암빌딩" in chunk:
-            property_name = "호암빌딩"
-        elif "남산빌" in chunk:
-            property_name = "남산빌"
-        elif "보성럭스타운" in chunk:
-            property_name = "보성럭스타운"
-        elif "문래동 카페" in chunk:
-            property_name = "문래동 카페건물"
-        elif "또똣온반" in chunk:
-            property_name = "양평동 또똣온반"
-        elif "신내동" in chunk and "신축" in chunk:
-            property_name = "신내동 신축 꼬마빌딩"
-        elif "미싱" in chunk:
-            property_name = "상봉동 종합미싱총판"
-        elif "양지식" in chunk:
-            property_name = "종로 양지식"
-        elif "루미에르" in chunk:
-            property_name = "영등포 루미에르"
-        elif "잠원동" in chunk and "상가" in chunk:
-            property_name = "잠원동 상가·사무실"
-        elif "신림동 255-283" in chunk:
-            property_name = "신림동 255-283"
-        elif "시흥동 237-37" in chunk:
-            property_name = "시흥동 237-37"
-        elif "시흥동 115-8" in chunk:
-            property_name = "시흥동 115-8"
-        elif "논현동" in chunk:
-            property_name = "논현동 매물"
-        elif "청담동" in chunk:
-            property_name = "청담동 매물"
-        elif "대치동" in chunk and "889-40" in chunk:
-            property_name = "대치동 889-40"
-        elif "성내동" in chunk:
-            property_name = "성내동 130-50"
-        elif "제기동" in chunk:
+        
+        # 강남권 (12건)
+        if "39-7" in chunk:  # 청담동
+            property_name = "소담빌딩 (청담동 39-7)"
+        elif "청담동 39)" in chunk or "학동로55길 28(청담동 39)" in chunk:
+            property_name = "청담동 39"
+        elif "40-32" in chunk or "선릉로 708" in chunk:  # 청담동
+            property_name = "호암빌딩 (청담동 40-32)"
+        elif "39-13" in chunk:  # 청담동
+            property_name = "청담동 39-13"
+        elif "111-31" in chunk:  # 논현동
+            property_name = "남산빌 (논현동 111-31)"
+        elif "111-23" in chunk:  # 논현동
+            property_name = "논현동 111-23"
+        elif "889-40" in chunk:  # 대치동
+            property_name = "대치동 889-40 (선릉역 토지)"
+        elif "62-8" in chunk:  # 논현동
+            property_name = "논현동 62-8"
+        elif "254-4" in chunk:  # 논현동
+            property_name = "보성럭스타운 (논현동 254-4)"
+        elif "792-2" in chunk:  # 제기동
             property_name = "제기동 792-2"
+        elif "130-50" in chunk:  # 성내동
+            property_name = "성내동 130-50"
+        
+        # 영등포권 (5건)
+        elif "342-337" in chunk or "도림로 268-2" in chunk:  # 신길동
+            property_name = "더베스트 신길동 (342-337)"
+        elif "1-25" in chunk or "문래북로 51-4" in chunk:  # 양평동1가
+            property_name = "문래동 카페건물 (양평동1가 1-25)"
+        elif "9-20" in chunk or "영등포로18길 6-1" in chunk:  # 양평동1가
+            property_name = "양평동 또똣온반 (양평동1가 9-20)"
+        elif "362-12" in chunk or "도림로 324-4" in chunk:  # 신길동 - 루미에르
+            property_name = "영등포 루미에르 (신길동 362-12)"
+        
+        # 중랑권 (3건)
+        elif "577-2" in chunk or "신내로10길 23" in chunk:  # 신내동
+            property_name = "신내동 신축 꼬마빌딩 (577-2)"
+        elif "120-11" in chunk:  # 상봉동
+            property_name = "상봉동 종합미싱총판 (120-11)"
+        
+        # 기타 지역 (5건)
+        elif "205-3" in chunk or "율곡로 261" in chunk:  # 종로6가
+            property_name = "종로 양지식 (종로6가 205-3)"
+        elif "255-283" in chunk or "대학18길 34-5" in chunk:  # 신림동
+            property_name = "신림동 255-283"
+        elif "237-37" in chunk or "탑골로 51-1" in chunk:  # 시흥동
+            property_name = "시흥동 237-37"
+        elif "115-8" in chunk or "시흥대로63길 18" in chunk:  # 시흥동
+            property_name = "시흥동 115-8"
+        elif "26-14" in chunk or "신반포로47길 77" in chunk:  # 잠원동
+            property_name = "잠원동 상가·사무실 (26-14)"
+        
+        # 지번을 찾지 못한 경우 (폴백)
         else:
             property_name = "기타 매물"
         
