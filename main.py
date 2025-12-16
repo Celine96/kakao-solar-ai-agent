@@ -60,6 +60,7 @@ MAX_RETRY_ATTEMPTS = int(os.getenv("MAX_RETRY_ATTEMPTS", 3))
 QUEUE_PROCESS_INTERVAL = int(os.getenv("QUEUE_PROCESS_INTERVAL", 5))
 
 # API Timeout Configuration
+# Allowed location names (whitelist)
 API_TIMEOUT = int(os.getenv("API_TIMEOUT", 4))  # 카카오톡 5초 제한 고려
 
 # Global state
@@ -111,6 +112,72 @@ except FileNotFoundError:
 except Exception as e:
     logger.error(f"❌ Failed to load embeddings: {e}")
     logger.warning("⚠️ Server will continue WITHOUT RAG")
+
+# ================================================================================
+# 동적으로 보유 지역 추출 (메타데이터 기반)
+# ================================================================================
+
+def extract_locations_from_metadata(metadata_list):
+    """메타데이터에서 보유 지역명을 추출"""
+    locations = set()
+    
+    # 지역명 추출 패턴
+    import re
+    
+    for meta in metadata_list:
+        if meta.get("type") in ["TYPE_A", "TYPE_B"]:
+            name = meta.get("name", "")
+            address = meta.get("address", "")
+            
+            # address에서 추출 (TYPE_A)
+            if address:
+                # "서울특별시 강남구 학동로 401" → "강남구"
+                # "서울 마포구 서교동 328-26" → "마포구", "서교동"
+                dong_match = re.search(r'([가-힣]+동)', address)
+                gu_match = re.search(r'([가-힣]+구)', address)
+                if dong_match:
+                    locations.add(dong_match.group(1))
+                if gu_match:
+                    locations.add(gu_match.group(1))
+            
+            # name에서 추출 (TYPE_B)
+            # "소담빌딩 (청담동 39-7)" → "청담동"
+            # "더베스트 신길동 (342-337)" → "신길동"
+            dong_match = re.search(r'([가-힣]+동)', name)
+            gu_match = re.search(r'([가-힣]+구)', name)
+            if dong_match:
+                locations.add(dong_match.group(1))
+            if gu_match:
+                locations.add(gu_match.group(1))
+    
+    return locations
+
+# 보유 지역 자동 추출
+ALLOWED_LOCATIONS = extract_locations_from_metadata(chunk_metadata)
+
+# 서울 전체 주요 지역 (참고용)
+SEOUL_ALL_LOCATIONS = {
+    "강남구", "강동구", "강북구", "강서구", "관악구", "광진구", "구로구", "금천구",
+    "노원구", "도봉구", "동대문구", "동작구", "마포구", "서대문구", "서초구", "성동구",
+    "성북구", "송파구", "양천구", "영등포구", "용산구", "은평구", "종로구", "중구", "중랑구",
+    # 주요 동
+    "청담동", "논현동", "대치동", "삼성동", "역삼동", "신사동", "압구정동",
+    "잠실동", "송파동", "방이동", "문정동",
+    "반포동", "서초동", "방배동", "양재동",
+    "신길동", "양평동", "문래동", "당산동", "여의도동",
+    "신내동", "상봉동", "망우동", "중화동",
+    "서교동", "연남동", "상수동", "합정동", "망원동",
+    "이태원", "한남동", "용산동",
+    "잠원동", "신림동", "시흥동", "봉천동",
+    "성내동", "제기동", "종로", "명동", "을지로"
+}
+
+# 금지 지역 = 서울 전체 - 보유 지역
+FORBIDDEN_LOCATIONS = SEOUL_ALL_LOCATIONS - ALLOWED_LOCATIONS
+
+logger.info(f"✅ 보유 지역 자동 추출: {len(ALLOWED_LOCATIONS)}개 - {sorted(ALLOWED_LOCATIONS)}")
+logger.info(f"⚠️ 금지 지역 자동 생성: {len(FORBIDDEN_LOCATIONS)}개")
+logger.info(f"🔍 금지 지역 샘플: {list(sorted(FORBIDDEN_LOCATIONS))[:10]}")
 
 # ================================================================================
 # RAG Helper Functions
@@ -531,20 +598,13 @@ async def process_solar_rag_request(request_body: dict):
     
     logger.info(f"📝 Final extracted prompt: '{prompt}'")
     
-    # 질문 패턴 분석 (추천/리스트 요청 감지)
+    # 추천/리스트 요청 감지 (더 엄격하게)
     is_recommendation_request = any(keyword in prompt.lower() for keyword in 
-                                    ["추천", "리스트", "목록", "몇 개", "여러 개", "알려줘", "있어"])
+                                    ["추천", "리스트", "목록", "몇 개", "여러 개", "3개", "5개", "10개"])
     
-    # Get relevant context using RAG
-    rag_result = await get_relevant_context(prompt, top_n=1)  # 속도 최적화: 2->1
-    context = rag_result["context"]
-    property_type = rag_result["property_type"]
-    property_name = rag_result["property_name"]
-    
-    # RAG 결과가 부족하고 추천 요청인 경우 특별 처리
-    if is_recommendation_request and (not context or len(context) < 100):
-        logger.warning("⚠️ Recommendation request with insufficient context")
-        # 보유 데이터 안내 응답
+    # 추천 요청이면 무조건 하드코딩 목록 반환 (AI 우회)
+    if is_recommendation_request:
+        logger.info("🎯 Recommendation request detected - returning hardcoded list")
         return {
             "version": "2.0",
             "template": {
@@ -553,24 +613,52 @@ async def process_solar_rag_request(request_body: dict):
                         "text": """현재 보유한 매물 데이터는 다음과 같습니다:
 
 [서안개발 보유 자산]
-• 금하빌딩 (강남구 학동로 401) - 임대
-• 서교동 328-26 (마포구) - 매매 80억
+• 금하빌딩 11층 (강남구 학동로 401) - 임대
+  보증금 3.5억, 월세 2,579만원
+• 서교동 328-26 (마포구 서교동) - 매매 80억
+  수익률 2.43%
 
-[시장 참고 정보]
-• 청담동 소담빌딩 (39-7) - 약 140억원대
-• 청담동 호암빌딩 (40-32) - 약 160억원대
-• 논현동 남산빌 (111-31) - 약 130억원대
-• 논현동 보성럭스타운 (254-4) - 약 500억원대
-• 신내동 신축 꼬마빌딩 (577-2) - 약 9억원대
-• 양평동 또똣온반 - 약 8억원대
-• 더베스트 신길동 - 약 19억원대
+[시장 참고 정보 - 강남권]
+• 소담빌딩 (청담동 39-7) - 약 140억원대
+• 호암빌딩 (청담동 40-32) - 약 160억원대
+• 청담동 39 (학동로55길 28) - 약 130억원대
+• 청담동 39-13 (학동로55길 12-3) - 약 147억원대
+• 남산빌 (논현동 111-31) - 약 130억원대
+• 논현동 111-23 - 약 210억원대
+• 논현동 62-8 - 약 500억원대
+• 보성럭스타운 (논현동 254-4) - 약 500억원대
+• 대치동 889-40 (선릉역 토지) - 약 1,160억원대
 
-구체적인 매물 정보가 필요하시면 매물명을 말씀해주세요.
+[시장 참고 정보 - 영등포권]
+• 더베스트 신길동 (도림로 268-2) - 약 19억원대
+• 문래동 카페건물 (문래북로 51-4) - 약 4.3억원대
+• 양평동 또똣온반 (영등포로18길 6-1) - 약 8억원대
+• 영등포 루미에르 (도림로 324-4) - 약 65억원대
+
+[시장 참고 정보 - 중랑권]
+• 신내동 신축 꼬마빌딩 (신내로10길 23) - 약 9억원대
+• 상봉동 종합미싱총판 - 약 9.8억원대
+
+[시장 참고 정보 - 기타]
+• 종로 양지식 (율곡로 261) - 약 9.5억원대
+• 잠원동 상가·사무실 (신반포로47길 77) - 임대상품
+• 신림동 255-283 - 약 4억원대
+• 시흥동 237-37 - 약 4.1억원대
+• 시흥동 115-8 - 약 3.5억원대
+
+구체적인 매물명(예: "소담빌딩", "금하빌딩 11층")을 말씀하시면 상세 정보를 안내해드립니다.
+
 📞 상담: 서안개발 컨설팅팀 02-3443-0724"""
                     }
                 }]
             }
         }
+    
+    # Get relevant context using RAG (단일 매물 요청만)
+    rag_result = await get_relevant_context(prompt, top_n=1)  # 속도 최적화: 2->1
+    context = rag_result["context"]
+    property_type = rag_result["property_type"]
+    property_name = rag_result["property_name"]
     
     # Build the query with context based on property type
     if context:
@@ -624,7 +712,8 @@ async def process_solar_rag_request(request_body: dict):
 ⚠️ 절대 규칙:
 - Context에 있는 매물 정보만 사용
 - 없는 매물은 절대 만들지 마세요
-- 반포동, 잠실동 등 Context에 없으면 언급 금지
+- 절대 언급 금지: 송파구, 잠실동, 반포동, 서초동, 용산구, 강서구, 강동구
+- 보유 지역만 언급: 청담동, 논현동, 대치동, 신길동, 양평동, 문래동, 신내동, 상봉동, 서교동, 종로, 잠원동
 - 확실한 정보만 제공
 - 주소는 "○○구 ○○동 일대"만
 - [시장 동향] 섹션은 사용자가 "거래 사례" 요청 시만
@@ -645,7 +734,7 @@ async def process_solar_rag_request(request_body: dict):
 🚨 할루시네이션 절대 금지 규칙:
 1. Context에 있는 정보만 사용
 2. 없는 매물은 절대 만들지 마세요
-3. 반포동, 잠실동 등 Context에 없으면 언급 금지
+3. 절대 언급 금지 지역: 송파구, 잠실동, 반포동, 서초동, 용산구, 강서구, 강동구
 4. 확실하지 않으면 "정보 없음" 응답
 5. 숫자를 지어내지 마세요
 
@@ -662,7 +751,7 @@ Context: {context}
 
 질문: {prompt}
 
-Context에 있는 사실만 사용! 지어내기 절대 금지!"""
+Context에 있는 사실만 사용! 송파구, 잠실동, 반포동 언급 절대 금지!"""
         
         logger.info(f"🔍 Using RAG with {len(context)} chars of context")
         logger.info(f"🏷️ Property Type: {property_type} ({property_name})")
@@ -696,6 +785,35 @@ And please respond in Korean following the above format."""
         
         answer = response.choices[0].message.content
         logger.info(f"✅ Solar API success - Response length: {len(answer)} chars")
+        
+        # 응답 검증: 금지된 지역명 감지
+        forbidden_found = [loc for loc in FORBIDDEN_LOCATIONS if loc in answer]
+        if forbidden_found:
+            logger.error(f"🚨 HALLUCINATION DETECTED: Forbidden locations found: {forbidden_found}")
+            
+            # 보유 지역 동적 생성 (동 단위만)
+            dong_locations = sorted([loc for loc in ALLOWED_LOCATIONS if loc.endswith("동")])
+            gu_locations = sorted([loc for loc in ALLOWED_LOCATIONS if loc.endswith("구")])
+            
+            return {
+                "version": "2.0",
+                "template": {
+                    "outputs": [{
+                        "simpleText": {
+                            "text": f"""죄송합니다. 해당 지역({', '.join(forbidden_found)})의 매물 정보는 현재 보유하고 있지 않습니다.
+
+보유 중인 매물 지역:
+• 동 단위: {', '.join(dong_locations)}
+• 구 단위: {', '.join(gu_locations)}
+
+전체 매물 목록을 보시려면 "매물 추천" 또는 "리스트"를 요청해주세요.
+
+📞 상담: 서안개발 컨설팅팀 02-3443-0724"""
+                        }
+                    }]
+                }
+            }
+        
         logger.info(f"📤 Sending response: {answer[:100]}...")
         
         return {
