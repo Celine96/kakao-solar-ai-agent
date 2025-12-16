@@ -156,24 +156,29 @@ def extract_locations_from_metadata(metadata_list):
 ALLOWED_LOCATIONS = extract_locations_from_metadata(chunk_metadata)
 
 # 서울 전체 주요 지역 (참고용)
-SEOUL_ALL_LOCATIONS = {
-    "강남구", "강동구", "강북구", "강서구", "관악구", "광진구", "구로구", "금천구",
-    "노원구", "도봉구", "동대문구", "동작구", "마포구", "서대문구", "서초구", "성동구",
-    "성북구", "송파구", "양천구", "영등포구", "용산구", "은평구", "종로구", "중구", "중랑구",
-    # 주요 동
+# 서울 전체 주요 동 (동 단위만 - 구는 제외)
+SEOUL_ALL_DONGS = {
+    # 강남권
     "청담동", "논현동", "대치동", "삼성동", "역삼동", "신사동", "압구정동",
+    # 송파권
     "잠실동", "송파동", "방이동", "문정동",
+    # 서초권
     "반포동", "서초동", "방배동", "양재동",
+    # 영등포권
     "신길동", "양평동", "문래동", "당산동", "여의도동",
+    # 중랑권
     "신내동", "상봉동", "망우동", "중화동",
+    # 마포권
     "서교동", "연남동", "상수동", "합정동", "망원동",
+    # 용산권
     "이태원", "한남동", "용산동",
+    # 기타
     "잠원동", "신림동", "시흥동", "봉천동",
-    "성내동", "제기동", "종로", "명동", "을지로"
+    "성내동", "제기동", "명동", "을지로"
 }
 
-# 금지 지역 = 서울 전체 - 보유 지역
-FORBIDDEN_LOCATIONS = SEOUL_ALL_LOCATIONS - ALLOWED_LOCATIONS
+# 금지 지역 = 서울 전체 동 - 보유 지역 (동 단위만!)
+FORBIDDEN_LOCATIONS = SEOUL_ALL_DONGS - ALLOWED_LOCATIONS
 
 # 지역별 가격대 (억원 단위)
 LOCATION_PRICE_RANGES = {
@@ -206,7 +211,7 @@ FORBIDDEN_BUILDING_TYPES = {
 }
 
 logger.info(f"✅ 보유 지역 자동 추출: {len(ALLOWED_LOCATIONS)}개 - {sorted(ALLOWED_LOCATIONS)}")
-logger.info(f"⚠️ 금지 지역 자동 생성: {len(FORBIDDEN_LOCATIONS)}개")
+logger.info(f"⚠️ 금지 지역 자동 생성 (동 단위만): {len(FORBIDDEN_LOCATIONS)}개")
 logger.info(f"🔍 금지 지역 샘플: {list(sorted(FORBIDDEN_LOCATIONS))[:10]}")
 logger.info(f"💰 지역별 가격대 설정: {len(LOCATION_PRICE_RANGES)}개 지역")
 logger.info(f"🏢 허용 건물 용도: {len(ALLOWED_BUILDING_TYPES)}개")
@@ -776,7 +781,7 @@ And please respond in Korean following the above format."""
         # ==================== 응답 검증 (간소화 + 필수 체크) ====================
         validation_errors = []
         
-        # 1. 금지된 지역명 검증 (빠른 체크)
+        # 1. 금지된 지역명 검증 (동 단위 - FORBIDDEN_LOCATIONS는 이미 동만 포함)
         forbidden_found = [loc for loc in FORBIDDEN_LOCATIONS if loc in answer]
         if forbidden_found:
             validation_errors.append(f"금지 지역: {forbidden_found[0]}")
