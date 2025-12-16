@@ -676,7 +676,8 @@ async def process_solar_rag_request(request_body: dict):
     
     # 추천/리스트 요청 감지 (더 엄격하게)
     is_recommendation_request = any(keyword in prompt.lower() for keyword in 
-                                    ["추천", "리스트", "목록", "몇 개", "여러 개", "3개", "5개", "10개"])
+                                    ["추천", "리스트", "목록", "몇 개", "여러 개", "3개", "5개", "10개", 
+                                     "매물 보여", "매물 알려"])
     
     # 추천 요청이면 무조건 하드코딩 목록 반환 (AI 우회)
     if is_recommendation_request:
@@ -731,10 +732,16 @@ async def process_solar_rag_request(request_body: dict):
         }
     
     # Get relevant context using RAG (단일 매물 요청만)
-    rag_result = await get_relevant_context(prompt, top_n=1)  # 속도 최우선
+    rag_result = await get_relevant_context(prompt, top_n=3)  # 정확도 우선: 1->3
     context = rag_result["context"]
     property_type = rag_result["property_type"]
     property_name = rag_result["property_name"]
+    
+    logger.info(f"🔍 RAG search completed:")
+    logger.info(f"  - Property type: {property_type}")
+    logger.info(f"  - Property name: {property_name}")
+    logger.info(f"  - Context length: {len(context)} chars")
+    logger.info(f"  - Context preview: {context[:200]}...")
     
     # Build the query with context based on property type
     if context:
