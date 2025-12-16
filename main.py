@@ -286,6 +286,7 @@ async def close_redis():
 
 async def enqueue_webhook_request(request_id: str, request_body: dict):
     """Enqueue a webhook request for later processing"""
+    global in_memory_webhook_queue  # 전역 변수 선언
     try:
         queued_request = QueuedRequest(
             request_id=request_id,
@@ -309,6 +310,7 @@ async def enqueue_webhook_request(request_id: str, request_body: dict):
 
 async def dequeue_webhook_request() -> Optional[QueuedRequest]:
     """Dequeue the next webhook request"""
+    global in_memory_processing_queue, in_memory_webhook_queue  # 전역 변수 선언
     try:
         if use_in_memory_queue:
             if len(in_memory_webhook_queue) == 0:
@@ -336,6 +338,7 @@ async def dequeue_webhook_request() -> Optional[QueuedRequest]:
 
 async def complete_webhook_request(request_id: str):
     """Mark a webhook request as completed"""
+    global in_memory_processing_queue  # 전역 변수 선언 추가
     try:
         if use_in_memory_queue:
             in_memory_processing_queue = deque([
@@ -355,6 +358,7 @@ async def complete_webhook_request(request_id: str):
 
 async def fail_webhook_request(request_id: str, error_message: str):
     """Move a failed webhook request to the failed queue"""
+    global in_memory_processing_queue, in_memory_failed_queue, in_memory_webhook_queue  # 전역 변수 선언
     try:
         if use_in_memory_queue:
             for req in in_memory_processing_queue:
@@ -901,6 +905,7 @@ async def queue_status():
 @app.post("/queue/retry-failed")
 async def retry_failed_requests():
     """Manually retry all failed requests"""
+    global in_memory_failed_queue, in_memory_webhook_queue  # 전역 변수 선언
     try:
         if use_in_memory_queue:
             retry_count = len(in_memory_failed_queue)
