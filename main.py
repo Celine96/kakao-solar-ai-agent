@@ -652,32 +652,32 @@ async def process_solar_rag_request(request_body: dict):
   수익률 2.43%
 
 [시장 참고 정보 - 강남권]
-• 소담빌딩 (청담동 39-7) - 약 140억원대
-• 호암빌딩 (청담동 40-32) - 약 160억원대
-• 청담동 39 (학동로55길 28) - 약 130억원대
-• 청담동 39-13 (학동로55길 12-3) - 약 147억원대
-• 남산빌 (논현동 111-31) - 약 130억원대
-• 논현동 111-23 - 약 210억원대
-• 논현동 62-8 - 약 500억원대
-• 보성럭스타운 (논현동 254-4) - 약 500억원대
-• 대치동 889-40 (선릉역 토지) - 약 1,160억원대
+• 소담빌딩 (청담동 XX) - 약 140억원대
+• 호암빌딩 (청담동 XX) - 약 160억원대
+• 청담동 XX (학동로55길) - 약 130억원대
+• 청담동 XX (학동로55길) - 약 147억원대
+• 남산빌 (논현동 XX) - 약 130억원대
+• 논현동 XX - 약 210억원대
+• 논현동 XX - 약 500억원대
+• 보성럭스타운 (논현동 XX) - 약 500억원대
+• 대치동 XX (선릉역 토지) - 약 1,160억원대
 
 [시장 참고 정보 - 영등포권]
-• 더베스트 신길동 (도림로 268-2) - 약 19억원대
-• 문래동 카페건물 (문래북로 51-4) - 약 4.3억원대
-• 양평동 또똣온반 (영등포로18길 6-1) - 약 8억원대
-• 영등포 루미에르 (도림로 324-4) - 약 65억원대
+• 더베스트 신길동 (도림로 XX) - 약 19억원대
+• 문래동 카페건물 (문래북로 XX) - 약 4.3억원대
+• 양평동 또똣온반 (영등포로18길 XX) - 약 8억원대
+• 영등포 루미에르 (도림로 XX) - 약 65억원대
 
 [시장 참고 정보 - 중랑권]
-• 신내동 신축 꼬마빌딩 (신내로10길 23) - 약 9억원대
+• 신내동 신축 꼬마빌딩 (신내로10길 XX) - 약 9억원대
 • 상봉동 종합미싱총판 - 약 9.8억원대
 
 [시장 참고 정보 - 기타]
-• 종로 양지식 (율곡로 261) - 약 9.5억원대
-• 잠원동 상가·사무실 (신반포로47길 77) - 임대상품
-• 신림동 255-283 - 약 4억원대
-• 시흥동 237-37 - 약 4.1억원대
-• 시흥동 115-8 - 약 3.5억원대
+• 종로 양지식 (율곡로 XX) - 약 9.5억원대
+• 잠원동 상가·사무실 (신반포로47길 XX) - 임대상품
+• 신림동 XX - 약 4억원대
+• 시흥동 XX - 약 4.1억원대
+• 시흥동 XX - 약 3.5억원대
 
 구체적인 매물명(예: "소담빌딩", "금하빌딩 11층")을 말씀하시면 상세 정보를 안내해드립니다.
 
@@ -711,6 +711,9 @@ async def process_solar_rag_request(request_body: dict):
             # 비제휴 중개사 매물 - 시장 참고 정보로만 제공
             response_guide = """첫 줄: [시장 참고 정보] {지역} 일대 {건물명}
 
+⚠️ 중요: Context에 정확히 있는 건물명만 사용! (에투알빌딩 등 창작 절대 금지!)
+⚠️ 강남권(청담동/논현동/대치동) 최소 100억! (20억, 50억, 80억 금지!)
+
 📍 위치: {구} {동} 일대
 🏢 건물: {층수, 용도}
 💰 시세: 약 {X}억원대 (참고가)
@@ -721,11 +724,12 @@ async def process_solar_rag_request(request_body: dict):
         query = f"""REXA 부동산 전문가. bullet points 요약.
 
 🚨 규칙:
-1. Context 정보만 사용
-2. 송파구/반포동/잠실동 금지
-3. 다가구주택/아파트 금지
-4. 청담동/논현동 최소 100억
-5. 첫 줄 태그 필수
+1. Context 정보만 사용 (절대!)
+2. Context에 없는 건물명 사용 금지 (에투알빌딩 등 창작 금지!)
+3. 송파구/반포동/잠실동 금지
+4. 다가구주택/아파트 금지
+5. 청담동/논현동/대치동 최소 100억 (20억, 50억, 80억 금지!)
+6. 첫 줄 태그 필수
 
 Type: {property_type} - {property_name}
 {response_guide}
@@ -734,7 +738,7 @@ Context: {context}
 
 질문: {prompt}
 
-Context만 사용! 지어내기 금지!"""
+Context에 정확히 있는 건물명만! 지어내면 안됨!"""
         
         logger.info(f"🔍 Using RAG with {len(context)} chars of context")
         logger.info(f"🏷️ Property Type: {property_type} ({property_name})")
@@ -769,7 +773,7 @@ And please respond in Korean following the above format."""
         answer = response.choices[0].message.content
         logger.info(f"✅ Solar API success - Response length: {len(answer)} chars")
         
-        # ==================== 응답 검증 (간소화) ====================
+        # ==================== 응답 검증 (간소화 + 필수 체크) ====================
         validation_errors = []
         
         # 1. 금지된 지역명 검증 (빠른 체크)
@@ -781,6 +785,20 @@ And please respond in Korean following the above format."""
         forbidden_types = [btype for btype in FORBIDDEN_BUILDING_TYPES if btype in answer]
         if forbidden_types:
             validation_errors.append(f"금지 용도: {forbidden_types[0]}")
+        
+        # 3. 빠른 가격대 체크 (정규식 없이 간단하게)
+        if "청담동" in answer or "논현동" in answer or "대치동" in answer:
+            # 강남 3구는 최소 100억 이상
+            if "20억" in answer or "30억" in answer or "50억" in answer or "80억" in answer:
+                validation_errors.append(f"가격 오류: 강남권은 최소 100억 이상")
+        
+        # 4. 질문-응답 지역 불일치 간단 체크 (속도 중요)
+        if "논현동" in prompt and "청담동" in answer and "논현동" not in answer:
+            validation_errors.append(f"지역 불일치: 논현동 질문 → 청담동 응답")
+        elif "청담동" in prompt and "논현동" in answer and "청담동" not in answer:
+            validation_errors.append(f"지역 불일치: 청담동 질문 → 논현동 응답")
+        elif "신내동" in prompt and ("청담동" in answer or "논현동" in answer):
+            validation_errors.append(f"지역 불일치: 신내동 질문 → 강남 응답")
         
         # 검증 실패 시 에러 응답
         if validation_errors:
