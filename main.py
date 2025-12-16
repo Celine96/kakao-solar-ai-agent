@@ -693,7 +693,7 @@ async def process_solar_rag_request(request_body: dict):
         }
     
     # Get relevant context using RAG (단일 매물 요청만)
-    rag_result = await get_relevant_context(prompt, top_n=1)  # 속도 최우선: 3->1
+    rag_result = await get_relevant_context(prompt, top_n=1)  # 속도 최우선
     context = rag_result["context"]
     property_type = rag_result["property_type"]
     property_name = rag_result["property_name"]
@@ -714,27 +714,35 @@ async def process_solar_rag_request(request_body: dict):
         
         else:
             # 비제휴 중개사 매물 - 시장 참고 정보로만 제공
-            response_guide = """첫 줄: [시장 참고 정보] {지역} 일대 {건물명}
+            response_guide = """첫 줄: [시장 참고 정보] {구} {동} 일대
 
-⚠️ 중요: Context에 정확히 있는 건물명만 사용! (에투알빌딩 등 창작 절대 금지!)
-⚠️ 강남권(청담동/논현동/대치동) 최소 100억! (20억, 50억, 80억 금지!)
+⚠️ 중요: 건물명/지번 절대 노출 금지! (법적 이슈)
 
-📍 위치: {구} {동} 일대
-🏢 건물: {층수, 용도}
-💰 시세: 약 {X}억원대 (참고가)
-📐 규모: 약 {X}평대
+해당 지역의 시장 정보만 제공:
 
-ℹ️ 본 정보는 시장 참고용이며, 정확한 내용 확인은 전문가 상담을 통해 문의해주세요"""
+{동}에는 약 {최소}억~{최대}억원대 {용도} 매물이 있습니다.
 
-        query = f"""REXA 부동산 전문가. bullet points 요약.
+💰 가격대: 약 {최소}억~{최대}억원대
+🏢 용도: {용도1}, {용도2}
+📐 규모: {소형/중형/대형}급
+
+ℹ️ 본 정보는 시장 참고용이며, 정확한 매물 정보는 전문가 상담을 통해 문의해주세요.
+📞 02-3443-0724
+
+절대 금지:
+- 건물명 언급 (소담빌딩, 호암빌딩 등)
+- 지번 언급 (39-7, 111-31 등)
+- 구체적 주소"""
+
+        query = f"""REXA 부동산 전문가. 지역 정보만 제공.
 
 🚨 규칙:
-1. Context 정보만 사용 (절대!)
-2. Context에 없는 건물명 사용 금지 (에투알빌딩 등 창작 금지!)
-3. 송파구/반포동/잠실동 금지
-4. 다가구주택/아파트 금지
-5. 청담동/논현동/대치동 최소 100억 (20억, 50억, 80억 금지!)
-6. 첫 줄 태그 필수
+1. Context 정보만 사용
+2. 건물명 절대 노출 금지! (법적 이슈)
+3. 지번 절대 노출 금지!
+4. 가격대 범위로만 표시 (예: 130억~500억)
+5. 용도만 표시 (근린생활시설, 업무시설 등)
+6. 강남권 최소 100억!
 
 Type: {property_type} - {property_name}
 {response_guide}
@@ -743,7 +751,7 @@ Context: {context}
 
 질문: {prompt}
 
-Context에 정확히 있는 건물명만! 지어내면 안됨!"""
+건물명/지번 절대 금지! 가격대와 용도만!"""
         
         logger.info(f"🔍 Using RAG with {len(context)} chars of context")
         logger.info(f"🏷️ Property Type: {property_type} ({property_name})")
