@@ -175,9 +175,42 @@ SEOUL_ALL_LOCATIONS = {
 # 금지 지역 = 서울 전체 - 보유 지역
 FORBIDDEN_LOCATIONS = SEOUL_ALL_LOCATIONS - ALLOWED_LOCATIONS
 
+# 지역별 가격대 (억원 단위)
+LOCATION_PRICE_RANGES = {
+    "청담동": (100, 1000),    # 100억~1000억
+    "논현동": (100, 1000),    # 100억~1000억  
+    "대치동": (100, 2000),    # 100억~2000억
+    "신내동": (5, 20),        # 5억~20억
+    "상봉동": (5, 20),        # 5억~20억
+    "신길동": (10, 50),       # 10억~50억
+    "양평동": (5, 20),        # 5억~20억
+    "문래동": (3, 10),        # 3억~10억
+    "서교동": (50, 150),      # 50억~150억
+    "잠원동": (10, 50),       # 10억~50억
+    "종로": (5, 20),          # 5억~20억
+    "신림동": (3, 10),        # 3억~10억
+    "시흥동": (3, 10),        # 3억~10억
+}
+
+# 허용된 건물 용도 (보유 데이터 기반)
+ALLOWED_BUILDING_TYPES = {
+    "제1종근린생활시설", "제2종근린생활시설", "근린생활시설",
+    "업무시설", "오피스텔", "근린상가", "상가건물", "사무실",
+    "꼬마빌딩", "빌딩", "건물", "토지", "대지"
+}
+
+# 금지된 건물 용도 (보유 데이터에 없음)
+FORBIDDEN_BUILDING_TYPES = {
+    "다가구주택", "단독주택", "다세대주택", "아파트", "빌라",
+    "연립주택", "주택", "주거용", "원룸", "투룸"
+}
+
 logger.info(f"✅ 보유 지역 자동 추출: {len(ALLOWED_LOCATIONS)}개 - {sorted(ALLOWED_LOCATIONS)}")
 logger.info(f"⚠️ 금지 지역 자동 생성: {len(FORBIDDEN_LOCATIONS)}개")
 logger.info(f"🔍 금지 지역 샘플: {list(sorted(FORBIDDEN_LOCATIONS))[:10]}")
+logger.info(f"💰 지역별 가격대 설정: {len(LOCATION_PRICE_RANGES)}개 지역")
+logger.info(f"🏢 허용 건물 용도: {len(ALLOWED_BUILDING_TYPES)}개")
+logger.info(f"🚫 금지 건물 용도: {len(FORBIDDEN_BUILDING_TYPES)}개")
 
 # ================================================================================
 # RAG Helper Functions
@@ -655,7 +688,7 @@ async def process_solar_rag_request(request_body: dict):
         }
     
     # Get relevant context using RAG (단일 매물 요청만)
-    rag_result = await get_relevant_context(prompt, top_n=1)  # 속도 최적화: 2->1
+    rag_result = await get_relevant_context(prompt, top_n=3)  # 정확도 향상: 1->3
     context = rag_result["context"]
     property_type = rag_result["property_type"]
     property_name = rag_result["property_name"]
@@ -714,6 +747,14 @@ async def process_solar_rag_request(request_body: dict):
 - 없는 매물은 절대 만들지 마세요
 - 절대 언급 금지: 송파구, 잠실동, 반포동, 서초동, 용산구, 강서구, 강동구
 - 보유 지역만 언급: 청담동, 논현동, 대치동, 신길동, 양평동, 문래동, 신내동, 상봉동, 서교동, 종로, 잠원동
+- 지역별 가격대 준수:
+  * 청담동/논현동/대치동: 최소 100억원 이상
+  * 신내동/상봉동/양평동: 5억~20억원대
+  * 신길동: 10억~50억원대
+  * 문래동: 3억~10억원대
+- 건물 용도 제한:
+  * 허용: 제1·2종근린생활시설, 업무시설, 오피스텔, 상가건물, 꼬마빌딩
+  * 금지: 다가구주택, 단독주택, 아파트, 빌라, 연립주택 (절대 사용 금지!)
 - 확실한 정보만 제공
 - 주소는 "○○구 ○○동 일대"만
 - [시장 동향] 섹션은 사용자가 "거래 사례" 요청 시만
@@ -735,8 +776,15 @@ async def process_solar_rag_request(request_body: dict):
 1. Context에 있는 정보만 사용
 2. 없는 매물은 절대 만들지 마세요
 3. 절대 언급 금지 지역: 송파구, 잠실동, 반포동, 서초동, 용산구, 강서구, 강동구
-4. 확실하지 않으면 "정보 없음" 응답
-5. 숫자를 지어내지 마세요
+4. 지역별 가격대 엄수:
+   - 청담동/논현동/대치동: 최소 100억원 (20억대, 50억대 절대 금지!)
+   - 신내동/양평동: 5~20억원대
+   - 신길동: 10~50억원대
+5. 건물 용도 제한:
+   - 허용: 근린생활시설, 업무시설, 상가, 꼬마빌딩
+   - 금지: 다가구주택, 아파트, 빌라 (절대 사용 금지!)
+6. 확실하지 않으면 "정보 없음" 응답
+7. 숫자를 지어내지 마세요
 
 ⚠️ 중요: 
 1. 응답 첫 줄에 반드시 태그 표시
@@ -751,7 +799,8 @@ Context: {context}
 
 질문: {prompt}
 
-Context에 있는 사실만 사용! 송파구, 잠실동, 반포동 언급 절대 금지!"""
+Context에 있는 사실만 사용! 송파구, 잠실동, 반포동 언급 절대 금지!
+청담동/논현동은 최소 100억! 다가구주택 절대 금지!"""
         
         logger.info(f"🔍 Using RAG with {len(context)} chars of context")
         logger.info(f"🏷️ Property Type: {property_type} ({property_name})")
@@ -786,12 +835,73 @@ And please respond in Korean following the above format."""
         answer = response.choices[0].message.content
         logger.info(f"✅ Solar API success - Response length: {len(answer)} chars")
         
-        # 응답 검증: 금지된 지역명 감지
+        # ==================== 응답 검증 (할루시네이션 방지) ====================
+        import re
+        
+        validation_errors = []
+        
+        # 1. 금지된 지역명 검증
         forbidden_found = [loc for loc in FORBIDDEN_LOCATIONS if loc in answer]
         if forbidden_found:
-            logger.error(f"🚨 HALLUCINATION DETECTED: Forbidden locations found: {forbidden_found}")
+            validation_errors.append(f"금지 지역: {', '.join(forbidden_found)}")
+        
+        # 2. 금지된 건물 용도 검증
+        forbidden_types = [btype for btype in FORBIDDEN_BUILDING_TYPES if btype in answer]
+        if forbidden_types:
+            validation_errors.append(f"금지 용도: {', '.join(forbidden_types)}")
+        
+        # 3. 가격대 검증 (지역별)
+        price_match = re.search(r'약?\s*(\d+)억원?대', answer)
+        if price_match:
+            price = int(price_match.group(1))
             
-            # 보유 지역 동적 생성 (동 단위만)
+            # 응답에서 지역 추출
+            response_location = None
+            for loc in ALLOWED_LOCATIONS:
+                if loc in answer:
+                    response_location = loc
+                    break
+            
+            # 가격대 범위 확인
+            if response_location and response_location in LOCATION_PRICE_RANGES:
+                min_price, max_price = LOCATION_PRICE_RANGES[response_location]
+                if price < min_price or price > max_price:
+                    validation_errors.append(
+                        f"가격 오류: {response_location}은 {min_price}~{max_price}억 범위인데 {price}억 응답"
+                    )
+        
+        # 4. 질문-응답 지역 일치성 검증
+        # 질문에서 지역 추출
+        question_location = None
+        for loc in ALLOWED_LOCATIONS:
+            if loc in prompt:
+                question_location = loc
+                break
+        
+        # 응답에서 지역 추출
+        response_location = None
+        for loc in ALLOWED_LOCATIONS:
+            if loc in answer:
+                response_location = loc
+                break
+        
+        # 질문 지역과 응답 지역이 다르면 오류
+        if question_location and response_location:
+            # "강남구청역" → "청담동" or "논현동"은 OK
+            # "논현동" → "신내동"은 NG
+            if question_location.endswith("동") and response_location.endswith("동"):
+                if question_location != response_location:
+                    validation_errors.append(
+                        f"지역 불일치: 질문({question_location}) ≠ 응답({response_location})"
+                    )
+        
+        # 검증 실패 시 에러 응답
+        if validation_errors:
+            logger.error(f"🚨 HALLUCINATION DETECTED: {', '.join(validation_errors)}")
+            logger.error(f"   Question: {prompt}")
+            logger.error(f"   Answer: {answer[:200]}")
+            
+            # 보유 지역 동적 생성
             dong_locations = sorted([loc for loc in ALLOWED_LOCATIONS if loc.endswith("동")])
             gu_locations = sorted([loc for loc in ALLOWED_LOCATIONS if loc.endswith("구")])
             
@@ -800,13 +910,16 @@ And please respond in Korean following the above format."""
                 "template": {
                     "outputs": [{
                         "simpleText": {
-                            "text": f"""죄송합니다. 해당 지역({', '.join(forbidden_found)})의 매물 정보는 현재 보유하고 있지 않습니다.
+                            "text": f"""죄송합니다. 정확한 정보를 찾지 못했습니다.
+
+검증 오류: {', '.join(validation_errors)}
 
 보유 중인 매물 지역:
 • 동 단위: {', '.join(dong_locations)}
 • 구 단위: {', '.join(gu_locations)}
 
-전체 매물 목록을 보시려면 "매물 추천" 또는 "리스트"를 요청해주세요.
+정확한 매물명(예: "소담빌딩", "금하빌딩")을 말씀하시거나,
+"매물 추천" 또는 "리스트"를 요청해주세요.
 
 📞 상담: 서안개발 컨설팅팀 02-3443-0724"""
                         }
@@ -814,6 +927,7 @@ And please respond in Korean following the above format."""
                 }
             }
         
+        logger.info(f"✅ Validation passed")
         logger.info(f"📤 Sending response: {answer[:100]}...")
         
         return {
